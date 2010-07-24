@@ -1,4 +1,6 @@
 # PyNudg - the python Nodal DG Environment
+# (C) 2009, 2010 Tim Warburton, Xueyu Zhu, Andreas Kloeckner
+#
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
@@ -13,13 +15,13 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 from __future__ import division
+from __future__ import with_statement
 
 from math import sqrt
 import numpy as np
 import numpy.linalg as la
 
-import scipy.sparse as sparse
-#import enthought.mayavi.mlab as mv
+import enthought.mayavi.mlab as mv
 
 
 NODETOL = 1e-12
@@ -28,70 +30,70 @@ eps = np.finfo(float).eps
 
 
 
-#Low storage Runge-Kutta coefficients
-rk4a = np.array([            0.0 ,\
-        -567301805773.0/1357537059087.0,\
-        -2404267990393.0/2016746695238.0,\
-        -3550918686646.0/2091501179385.0,\
-        -1275806237668.0/842570457699.0])
-rk4b = [ 1432997174477.0/9575080441755.0,\
-         5161836677717.0/13612068292357.0,\
-         1720146321549.0/2090206949498.0 ,\
-         3134564353537.0/4481467310338.0 ,\
-         2277821191437.0/14882151754819.0]
-rk4c = [             0.0  ,\
-         1432997174477.0/9575080441755.0 ,\
-         2526269341429.0/6820363962896.0 ,\
-         2006345519317.0/3224310063776.0 ,\
-         2802321613138.0/2924317926251.0]
+# Low-storage Runge-Kutta coefficients
+rk4a = np.array([0 ,
+        -567301805773/1357537059087,
+        -2404267990393/2016746695238,
+        -3550918686646/2091501179385,
+        -1275806237668/842570457699])
+rk4b = [ 1432997174477/9575080441755,
+         5161836677717/13612068292357,
+         1720146321549/2090206949498,
+         3134564353537/4481467310338,
+         2277821191437/14882151754819]
+rk4c = [0,
+         1432997174477/9575080441755,
+         2526269341429/6820363962896,
+         2006345519317/3224310063776,
+         2802321613138/2924317926251]
+
+
+
 
 def gamma(z):
-
     g = 1
     for i in range(1, np.int32(z)):
         g = g*i
 
     return g
 
-def MeshReaderGambit2D(FileName):
-    """function [Nv, VX, VY, K, EToV] = MeshReaderGambit2D(FileName)
-    Purpose : Read in basic grid information to build gri
-    NOTE     : gambit(Fluent, Inc) *.neu format is assumd"""
+def MeshReaderGambit2D(file_name):
+    """Read in basic grid information to build grid
+    Note: Gambit(Fluent, Inc) *.neu format is assumed.
 
-    Fid = open(FileName, 'r')
+    Returns (Nv, VX, VY, K, EToV).
+    """
 
-    #read after intro
-    for i in range(6):
-        line = Fid.readline()
+    with open(file_name, 'r') as inf:
+        # read after intro
+        for i in range(6):
+            line = inf.readline()
 
-    # Find number of nodes and number of elements
-    dims = Fid.readline().split()
-    Nv = np.int(dims[0]); K = np.int32(dims[1])
+        # Find number of nodes and number of elements
+        dims = inf.readline().split()
+        Nv = np.int(dims[0]); K = np.int32(dims[1])
 
-    for i in range(2):
-        line = Fid.readline()
+        for i in range(2):
+            line = inf.readline()
 
-    #read node coordinates
-    VX = np.zeros(Nv); VY = np.zeros(Nv)
-    for i  in range(Nv):
-        tmpx = Fid.readline().split()
-        VX[i] = float(tmpx[1]); VY[i] = float(tmpx[2])
+        # read node coordinates
+        VX = np.zeros(Nv); VY = np.zeros(Nv)
+        for i  in range(Nv):
+            tmpx = inf.readline().split()
+            VX[i] = float(tmpx[1]); VY[i] = float(tmpx[2])
 
+        for i in range(2):
+            line = inf.readline()
 
-    for i in range(2):
-        line = Fid.readline()
+        # read element to node connectivity
+        EToV = np.zeros((K, 3))
+        for k in range(K):
+            tmpcon= inf.readline().split()
+            EToV[k,0] = np.int32(tmpcon[3])-1
+            EToV[k,1] = np.int32(tmpcon[4])-1
+            EToV[k,2] = np.int32(tmpcon[5])-1
 
-    #read element to node connectivity
-    EToV = np.zeros((K, 3))
-    for k in range(K):
-        tmpcon= Fid.readline().split()
-        EToV[k,0] = np.int32(tmpcon[3])-1
-        EToV[k,1] = np.int32(tmpcon[4])-1
-        EToV[k,2] = np.int32(tmpcon[5])-1
-
-    #Close file
-    Fid.close()
-    return Nv, VX, VY, K, EToV
+        return Nv, VX, VY, K, EToV
 
 
 def JacobiP(x,alpha,beta,N):
@@ -137,10 +139,9 @@ def JacobiP(x,alpha,beta,N):
     return PL[:,N]
 
 def Vandermonde1D(N,xp):
-
-    """ function [V1D] = Vandermonde1D(N,xp)
-        Purpose : Initialize the 1D Vandermonde Matrix.
-                V_{ij} = phi_j(xp_i);"""
+    """Initialize the 1D Vandermonde Matrix.
+    V_{ij} = phi_j(xp_i)
+    """
 
     Nx = np.int32(xp.shape[0])
     N  = np.int32(N)
@@ -151,11 +152,11 @@ def Vandermonde1D(N,xp):
 
     return V1D
 
-def  JacobiGQ(alpha,beta,N):
-    """ function [x,w] = JacobiGQ(alpha,beta,N)
-        Purpose: Compute the N'th order Gauss quadrature points, x,
-        and weights, w, associated with the Jacobi
-        polynomial, of type (alpha,beta) > -1 ( <> -0.5)."""
+def JacobiGQ(alpha,beta,N):
+    """Compute the N'th order Gauss quadrature points, x,
+    and weights, w, associated with the Jacobi
+    polynomial, of type (alpha,beta) > -1 ( <> -0.5).
+    """
 
     if N==0:
         x[0]=(alpha-beta)/(alpha+beta+2)
@@ -172,7 +173,7 @@ def  JacobiGQ(alpha,beta,N):
         J[0,0] = 0.0
     J = J + J.T
 
-    #Compute quadrature by eigenvalue solve
+    # Compute quadrature by eigenvalue solve
     D,V = la.eig(J)
     ind = np.argsort(D)
     D = D[ind]
@@ -183,8 +184,9 @@ def  JacobiGQ(alpha,beta,N):
     return x, w
 
 def  JacobiGL(alpha,beta,N):
-    """ function [x] = JacobiGL(alpha,beta,N)
-         Purpose: Compute the Nth order Gauss Lobatto quadrature points, x, associated with the Jacobi polynomia           l,of type (alpha,beta) > -1 ( <> -0.5)."""
+    """Compute the Nth order Gauss Lobatto quadrature points, x,
+    associated with the Jacobi polynomial,of type (alpha,beta) > -1 ( <> -0.5).
+    """
 
     x = np.zeros((N+1,1))
     if N==1:
@@ -201,8 +203,9 @@ def  JacobiGL(alpha,beta,N):
 
 
 def Warpfactor(N, rout):
-    """function warp = Warpfactor(N, rout)
-       Purpose  : Compute scaled warp function at order N based on rout interpolation nodes"""
+    """Compute scaled warp function at order N based on
+    rout interpolation nodes.
+    """
 
     # Compute LGL and equidistant node distribution
     LGLr = JacobiGL(0,0,N); req  = np.linspace(-1,1,N+1)
@@ -224,8 +227,9 @@ def Warpfactor(N, rout):
     return warp
 
 def Nodes2D(N):
-    """function [x,y] = Nodes2D(N)
-       Purpose  : Compute (x,y) nodes in equilateral triangle for polynomial of order N"""
+    """Compute (x,y) nodes in equilateral triangle for polynomial
+    of order N.
+    """
 
     alpopt = np.array([0.0000, 0.0000, 1.4152, 0.1001, 0.2751, 0.9800, 1.0999,\
             1.2832, 1.3648, 1.4773, 1.4959, 1.5743, 1.5770, 1.6223,1.6258])
@@ -264,14 +268,14 @@ def Nodes2D(N):
     warp1 = blend1*warpf1*(1 + (alpha*L1)**2)
     warp2 = blend2*warpf2*(1 + (alpha*L2)**2)
     warp3 = blend3*warpf3*(1 + (alpha*L3)**2)
+
     # Accumulate deformations associated with each edge
     x = x + 1*warp1 + np.cos(2*np.pi/3)*warp2 + np.cos(4*np.pi/3)*warp3
     y = y + 0*warp1 + np.sin(2*np.pi/3)*warp2 + np.sin(4*np.pi/3)*warp3
     return x,y
 
 def xytors(x,y):
-    """function [r,s] = xytors(x, y)
-    Purpose : From (x,y) in equilateral triangle to (r,s) coordinates in standard triangle"""
+    """From (x,y) in equilateral triangle to (r,s) coordinates in standard triangle."""
 
     L1 = (np.sqrt(3.0)*y+1.0)/3.0
     L2 = (-3.0*x - np.sqrt(3.0)*y + 2.0)/6.0
@@ -281,8 +285,8 @@ def xytors(x,y):
     return r,s
 
 def rstoab(r,s):
-    """function [a,b] = rstoab(r,s)
- Purpose : Transfer from (r,s) -> (a,b) coordinates in triangle"""
+    """Transfer from (r,s) -> (a,b) coordinates in triangle.
+    """
 
     Np = len(r); a = np.zeros((Np,1))
     for n in range(Np):
@@ -295,17 +299,18 @@ def rstoab(r,s):
     return a,b
 
 def Simplex2DP(a,b,i,j):
-    """function [P] = Simplex2DP(a,b,i,j)
-     Purpose : Evaluate 2D orthonormal polynomial
-           on simplex at (a,b) of order (i,j)"""
+    """Evaluate 2D orthonormal polynomial
+    on simplex at (a,b) of order (i,j).
+    """
+
     h1 = JacobiP(a,0,0,i).reshape(len(a),1)
     h2 = JacobiP(b,2*i+1,0,j).reshape(len(a),1)
     P  = np.sqrt(2.0)*h1*h2*(1-b)**i
     return P[:,0]
 
 def Vandermonde2D(N, r, s):
-    """function [V2D] = Vandermonde2D(N, r, s)
-    Purpose : Initialize the 2D Vandermonde Matrix,  V_{ij} = phi_j(r_i, s_i)"""
+    """Initialize the 2D Vandermonde Matrix,  V_{ij} = phi_j(r_i, s_i)
+    """
 
     V2D = np.zeros((len(r),(N+1)*(N+2)/2))
 
@@ -322,8 +327,10 @@ def Vandermonde2D(N, r, s):
     return V2D
 
 def GradJacobiP(z, alpha, beta, N):
-    """ function [dP] = GradJacobiP(z, alpha, beta, N)
-    Purpose: Evaluate the derivative of the orthonormal Jacobi polynomial of type (alpha,beta)>-1, at points x for order N and returns dP[1:length(xp))]"""
+    """Evaluate the derivative of the orthonormal Jacobi polynomial 
+    of type (alpha,beta)>-1, at points x for order N and 
+    returns dP[1:len(xp))].
+    """
     Nx = np.int32(z.shape[0])
     dP = np.zeros((Nx, 1))
     if N==0:
@@ -334,8 +341,10 @@ def GradJacobiP(z, alpha, beta, N):
     return dP
 
 def GradSimplex2DP(a,b,id,jd):
-    """function [dmodedr, dmodeds] = GradSimplex2DP(a,b,id,jd)
-    Purpose: Return the derivatives of the modal basis (id,jd) on the 2D simplex at (a,b)."""
+    """Return the derivatives of the modal basis (id,jd) on the 
+    2D simplex at (a,b).
+    """
+
     fa  = JacobiP(a, 0, 0, id).reshape(len(a),1)
     dfa = GradJacobiP(a, 0, 0, id)
     gb  = JacobiP(b, 2*id+1,0, jd).reshape(len(b),1)
@@ -364,8 +373,9 @@ def GradSimplex2DP(a,b,id,jd):
 
 
 def GradVandermonde2D(N,r,s):
-    """function [V2Dr,V2Ds] = GradVandermonde2D(N,r,s)
-    Purpose : Initialize the gradient of the modal basis (i,j) at (r,s) at order N"""
+    """Initialize the gradient of the modal basis 
+    (i,j) at (r,s) at order N.
+    """
 
     V2Dr = np.zeros((len(r),(N+1)*(N+2)/2))
     V2Ds = np.zeros((len(r),(N+1)*(N+2)/2))
@@ -381,8 +391,10 @@ def GradVandermonde2D(N,r,s):
     return V2Dr,V2Ds
 
 def Dmatrices2D(N,r,s,V):
-    """function [Dr,Ds] = Dmatrices2D(N,r,s,V)
-    Purpose : Initialize the (r,s) differentiation matriceon the simplex, evaluated at (r,s) at order N"""
+    """Initialize the (r,s) differentiation matriceon the simplex, 
+    evaluated at (r,s) at order N.
+    """
+
     Vr, Vs = GradVandermonde2D(N, r, s)
     invV   = la.inv(V)
     Dr     = np.dot(Vr,invV)
@@ -390,8 +402,7 @@ def Dmatrices2D(N,r,s,V):
     return Dr,Ds
 
 def Lift2D(ldis,r,s,V,Fmask):
-    """function [LIFT] = Lift2D()
-    Purpose  : Compute surface to volume lift term for DG formulation"""
+    """Compute surface to volume lift term for DG formulation."""
     l = ldis
 
     Emat = np.zeros((l.Np, l.Nfaces*l.Nfp))
@@ -419,30 +430,37 @@ def Lift2D(ldis,r,s,V,Fmask):
     return LIFT
 
 def GeometricFactors2D(x,y,Dr,Ds):
-    """function [rx,sx,ry,sy,J] = GeometricFactors2D(x,y,Dr,Ds)
-    Purpose  : Compute the metric elements for the local mappings of the elements"""
-    #Calculate geometric factors
+    """Compute the metric elements for the local mappings of the elements
+    Returns [rx,sx,ry,sy,J].
+    """
+    # Calculate geometric factors
     xr = np.dot(Dr,x); xs = np.dot(Ds,x)
     yr = np.dot(Dr,y); ys = np.dot(Ds,y); J = -xs*yr + xr*ys
     rx = ys/J; sx =-yr/J; ry =-xs/J; sy = xr/J
     return rx, sx, ry, sy, J
 
-def Normals2D(Dr,Ds,x,y,K,N,Fmask):
-    """function [nx, ny, sJ] = Normals2D()
-    #Purpose : Compute outward pointing normals at elements faces and surface Jacobians"""
-    Nfp = N+1; Np = (N+1)*(N+2)/2
-    xr = np.dot(Dr,x); yr = np.dot(Dr,y)
-    xs = np.dot(Ds,x); ys = np.dot(Ds,y); J = xr*ys-xs*yr
+def Normals2D(ldis, x,y, K):
+    """Compute outward pointing normals at elements faces 
+    and surface Jacobians.
+    """
+
+    l = ldis
+    xr = np.dot(l.Dr,x)
+    yr = np.dot(l.Dr,y)
+    xs = np.dot(l.Ds,x)
+    ys = np.dot(l.Ds,y)
+    J = xr*ys-xs*yr
 
     # interpolate geometric factors to face nodes
-    fxr = xr[Fmask, :]; fxs = xs[Fmask, :]
-    fyr = yr[Fmask, :]; fys = ys[Fmask, :]
+    fxr = xr[l.FmaskF, :]; fxs = xs[l.FmaskF, :]
+    fyr = yr[l.FmaskF, :]; fys = ys[l.FmaskF, :]
 
     # build normals
-    nx = np.zeros((3*Nfp, K)); ny = np.zeros((3*Nfp, K))
-    fid1 = np.arange(Nfp).reshape(Nfp,1)
-    fid2 = fid1+Nfp
-    fid3 = fid2+Nfp
+    nx = np.zeros((3*l.Nfp, K))
+    ny = np.zeros((3*l.Nfp, K))
+    fid1 = np.arange(l.Nfp).reshape(l.Nfp,1)
+    fid2 = fid1+l.Nfp
+    fid3 = fid2+l.Nfp
 
     # face 1
 
@@ -463,17 +481,21 @@ def Normals2D(Dr,Ds,x,y,K,N,Fmask):
     return nx, ny, sJ
 
 def Connect2D(EToV):
-    """function [EToE, EToF] = Connect2D(EToV)
-    Purpose  : Build global connectivity arrays for grid based on standard EToV input array from grid generator"""
+    """Build global connectivity arrays for grid based on 
+    standard EToV input array from grid generator.
+    """
+
     Nfaces = 3
     # Find number of elements and vertices
     K = EToV.shape[0]; Nv = EToV.max()+1
 
-    #Create face to node connectivity matrix
+    # Create face to node connectivity matrix
     TotalFaces = Nfaces*K
 
     # List of local face to local vertex connections
     vn = np.int32([[0,1],[1,2],[0,2]])
+
+    import scipy.sparse as sparse
     # Build global face to node sparse array
     SpFToV = sparse.lil_matrix((TotalFaces, Nv))
     sk = 0
@@ -493,13 +515,13 @@ def Connect2D(EToV):
     faces1 = a[0,:].T
     faces2 = a[1,:].T
     del a
-    #Convert faceglobal number to element and face numbers
+    # Convert faceglobal number to element and face numbers
     element1 = np.floor( (faces1)/Nfaces )
     face1    = np.mod( (faces1), Nfaces )
     element2 = np.floor( (faces2)/Nfaces )
     face2    = np.mod( (faces2), Nfaces )
 
-    #Rearrange into Nelements x Nfaces sized arrays
+    # Rearrange into Nelements x Nfaces sized arrays
     size = np.array([K,Nfaces])
     ind = sub2ind([K, Nfaces], element1, face1)
 
@@ -518,35 +540,39 @@ def Connect2D(EToV):
     return  EToE, EToF
 
 def sub2ind(size,I,J):
-    """function: IND = sub2ind(size,I,J)
-    Purpose:returns the linear index equivalent to the row and column subscripts I and J for a matrix of size siz. siz is a vector with ndim(A) elements (in this case, 2), where siz(1) is the number of rows and siz(2) is the number of columns."""
+    """Return the linear index equivalent to the row and column subscripts 
+    I and J for a matrix of size siz. siz is a vector with ndim(A) elements 
+    (in this case, 2), where siz(1) is the number of rows and siz(2) is the 
+    number of columns.
+    """
     ind = I*size[1]+J
     return ind
 
 def BuildMaps2D(ldis, Fmask,VX,VY, EToV, EToE, EToF, K, N, x,y):
-    """function [mapM, mapP, vmapM, vmapP, vmapB, mapB] = BuildMaps2D
-    Purpose: Connectivity and boundary tables in the K # of Np elements"""
+    """Connectivity and boundary tables in the K # of Np elements
+    Returns [mapM, mapP, vmapM, vmapP, vmapB, mapB].
+    """
 
     l = ldis
-    Nfp = N+1; Np = (N+1)*(N+2)/2
-    #number volume nodes consecutively
-    temp    = np.arange(K*Np)
-    nodeids = temp.reshape(Np, K,order='F').copy()
 
-    vmapM   = np.zeros((Nfp, l.Nfaces, K))
-    vmapP   = np.zeros((Nfp, l.Nfaces, K))
-    mapM    = np.arange(np.int32(K)*Nfp*l.Nfaces)
-    mapP    = mapM.reshape(Nfp, l.Nfaces, K).copy()
+    # number volume nodes consecutively
+    temp    = np.arange(K*l.Np)
+    nodeids = temp.reshape(l.Np, K,order='F').copy()
+
+    vmapM   = np.zeros((l.Nfp, l.Nfaces, K))
+    vmapP   = np.zeros((l.Nfp, l.Nfaces, K))
+    mapM    = np.arange(np.int32(K)*l.Nfp*l.Nfaces)
+    mapP    = mapM.reshape(l.Nfp, l.Nfaces, K).copy()
     # find index of face nodes with respect to volume node ordering
     for k1 in range(K):
         for f1 in range(l.Nfaces):
             vmapM[:,f1,k1] = nodeids[Fmask[:,f1], k1]
 
     # need to figure it out
-    xtemp = x.reshape(K*Np,1,order='F').copy()
-    ytemp = y.reshape(K*Np,1,order='F').copy()
+    xtemp = x.reshape(K*l.Np,1,order='F').copy()
+    ytemp = y.reshape(K*l.Np,1,order='F').copy()
 
-    one = np.ones((1,Nfp))
+    one = np.ones((1,l.Nfp))
     for k1 in range(K):
         for f1 in range(l.Nfaces):
             # find neighbor
@@ -558,7 +584,7 @@ def BuildMaps2D(ldis, Fmask,VX,VY, EToV, EToE, EToF, K, N, x,y):
 
             refd = np.sqrt((VX[v1]-VX[v2])**2 \
                     + (VY[v1]-VY[v2])**2 )
-            #find find volume node numbers of left and right nodes
+            # find find volume node numbers of left and right nodes
             vidM = vmapM[:,f1,k1]; vidP = vmapM[:,f2,k2]
             x1 = xtemp[np.int32(vidM)]
             y1 = ytemp[np.int32(vidM)]
@@ -566,50 +592,22 @@ def BuildMaps2D(ldis, Fmask,VX,VY, EToV, EToE, EToF, K, N, x,y):
             y2 = ytemp[np.int32(vidP)]
             x1 = np.dot(x1,one);  y1 = np.dot(y1,one)
             x2 = np.dot(x2,one);  y2 = np.dot(y2,one)
-            #Compute distance matrix
+            # Compute distance matrix
             D = (x1 -x2.T)**2 + (y1-y2.T)**2
             # need to figure it out
             idM, idP = np.nonzero(np.sqrt(abs(D))<NODETOL*refd)
             vmapP[idM,f1,k1] = vidP[idP]
-            mapP[idM,f1,k1] = idP + f2*Nfp+k2*l.Nfaces*Nfp
+            mapP[idM,f1,k1] = idP + f2*l.Nfp+k2*l.Nfaces*l.Nfp
 
     # reshape vmapM and vmapP to be vectors and create boundary node list
-    vmapP = vmapP.reshape(Nfp*l.Nfaces*K,1,order='F')
-    vmapM = vmapM.reshape(Nfp*l.Nfaces*K,1,order='F')
-    mapP  = mapP.reshape(Nfp*l.Nfaces*K,1,order='F')
+
+    vmapP = vmapP.reshape(l.Nfp*l.Nfaces*K,1,order='F')
+    vmapM = vmapM.reshape(l.Nfp*l.Nfaces*K,1,order='F')
+    mapP  = mapP.reshape(l.Nfp*l.Nfaces*K,1,order='F')
     mapB  = np.array((vmapP==vmapM).nonzero())[0,:]
     mapB  = mapB.reshape(len(mapB),1)
     vmapB = vmapM[mapB].reshape(len(mapB),1)
     return np.int32(mapM), np.int32(mapP), np.int32(vmapM), np.int32(vmapP), np.int32(vmapB), np.int32(mapB)
-
-
-def dtscale2D(r,s,x,y):
-    """function dtscale = dtscale2D
-    Purpose : Compute inscribed circle diameter as characteristic for grid to choose timestep"""
-
-    #Find vertex nodes
-    vmask1   = (abs(s+r+2) < NODETOL).nonzero()[0]
-    vmask2   = (abs(r-1)   < NODETOL).nonzero()[0]
-    vmask3   = (abs(s-1)   < NODETOL).nonzero()[0]
-    vmask    = np.vstack((vmask1,vmask2,vmask3))
-    vmask    = vmask.T
-    vmaskF   = vmask.reshape(vmask.shape[0]*vmask.shape[1],order='F')
-
-    vx = x[vmaskF[:], :]; vy = y[vmaskF[:], :]
-
-    #Compute semi-perimeter and area
-    len1 = np.sqrt((vx[0,:]-vx[1,:])**2\
-            +(vy[0,:]-vy[1,:])**2)
-    len2 = np.sqrt((vx[1,:]-vx[2,:])**2\
-            +(vy[1,:]-vy[2,:])**2)
-    len3 = np.sqrt((vx[2,:]-vx[0,:])**2\
-            +(vy[2,:]-vy[0,:])**2)
-    sper = (len1 + len2 + len3)/2.0
-    Area = np.sqrt(sper*(sper-len1)*(sper-len2)*(sper-len3))
-
-    # Compute scale using radius of inscribed circle
-    dtscale = Area/sper
-    return dtscale
 
 
 def ind2sub(matr,row_size):
@@ -617,6 +615,9 @@ def ind2sub(matr,row_size):
     I = np.int32(np.mod(matr,row_size))
     J = np.int32((matr - I)/row_size)
     return I,J
+
+
+
 
 # {{{ discretization data
 
@@ -627,59 +628,63 @@ class LocalDiscretization2D:
         self.Nfp = N+1
         self.Nfaces = 3
 
-        l = self
-
-        # Compute nodal set  
+        # compute nodal set
         x, y = self.x, self.y = Nodes2D(N)
         r, s = self.r, self.s = xytors(self.x, self.y)
 
-        fmask1   = ( abs(l.s+1) < NODETOL).nonzero()[0]; 
-        fmask2   = ( abs(l.r+l.s) < NODETOL).nonzero()[0]
-        fmask3   = ( abs(l.r+1) < NODETOL).nonzero()[0]
-        Fmask = self.Fmask    = np.vstack((fmask1,fmask2,fmask3)).T
-        FmaskF = self.FmaskF = Fmask.reshape(Fmask.shape[0]*Fmask.shape[1],order='F')
-        Fx = x[FmaskF[:], :]; Fy = y[FmaskF[:], :]
+        # face masks
+        fmask1   = (np.abs(s+1) < NODETOL).nonzero()[0];
+        fmask2   = (np.abs(r+s) < NODETOL).nonzero()[0]
+        fmask3   = (np.abs(r+1) < NODETOL).nonzero()[0]
+        Fmask = self.Fmask = np.vstack((fmask1,fmask2,fmask3)).T
+        FmaskF = self.FmaskF = Fmask.T.flatten()
+
+        self.Fx = x[FmaskF[:], :]
+        self.Fy = y[FmaskF[:], :]
 
         # Build reference element matrices
-        self.V  = Vandermonde2D(N, r, s)
+        V = self.V  = Vandermonde2D(N, r, s)
         invV = la.inv(self.V)
         MassMatrix = invV.T*invV
         self.Dr, self.Ds = Dmatrices2D(N, r, s, self.V)
 
-        self.LIFT = Lift2D(l, l.r, l.s, l.V, Fmask)
+        self.LIFT = Lift2D(self, r, s, V, Fmask)
+
+        # weak operators
+        Vr, Vs = GradVandermonde2D(N, r, s)
+        invVV = la.inv(np.dot(V,V.T))
+        self.Drw = np.dot(np.dot(V, Vr.T), invVV);
+        self.Dsw = np.dot(np.dot(V, Vs.T), invVV)
 
 class Discretization2D:
-    """ to store the global data that we need to use all the time"""
-    def __init__(self, ldis, Nv,VX,VY,K,EToV):
+    def __init__(self, ldis, Nv, VX, VY, K, EToV):
         l = self.ldis = ldis
 
-        self.Nv = Nv; self.VX   = VX
-        self.K  = K ; self.EToV = EToV
+        self.Nv = Nv
+        self.VX   = VX
+        self.K  = K
+        self.EToV = EToV
 
         va = np.int32(EToV[:, 0].T)
-        vb =np.int32(EToV[:, 1].T)
+        vb = np.int32(EToV[:, 1].T)
         vc = np.int32(EToV[:, 2].T)
 
-        x = self.x = 0.5*(-np.outer(l.r+l.s,VX[va])+np.outer(1+l.r,VX[vb])+np.outer(1+l.s,VX[vc]))
-        y = self.y = 0.5*(-np.outer(l.r+l.s,VY[va])+np.outer(1+l.r,VY[vb])+np.outer(1+l.s,VY[vc]))
+        x = self.x = 0.5*(
+                -np.outer(l.r+l.s, VX[va])
+                +np.outer(1+l.r, VX[vb])
+                +np.outer(1+l.s, VX[vc]))
+        y = self.y = 0.5*(
+                -np.outer(l.r+l.s, VY[va])
+                +np.outer(1+l.r, VY[vb])
+                +np.outer(1+l.s, VY[vc]))
 
-        rx,sx,ry,sy,J = GeometricFactors2D(x,y,l.Dr,l.Ds)
-        nx, ny, sJ = Normals2D(l.Dr,l.Ds,x,y,K,l.N,l.FmaskF)
-        Fscale = sJ/J[l.FmaskF,:]
-        EToE, EToF = Connect2D(EToV)
+        self.rx,self.sx,self.ry,self.sy, self.J = GeometricFactors2D(x, y, l.Dr, l.Ds)
+        self.nx, self.ny, sJ = Normals2D(l, x, y, K)
+        self.Fscale = sJ/self.J[l.FmaskF,:]
+        self.EToE, self.EToF = Connect2D(EToV)
 
-        mapM, mapP, vmapM, vmapP, vmapB, mapB = BuildMaps2D(l, l.Fmask,VX,VY, EToV, EToE, EToF, K, l.N, x,y)
-
-        self.x  = x ; self.rx   = rx
-        self.y  = y ; self.ry   = ry
-        self.sx = sx ; self.sy   = sy
-        self.J  = J ; self.nx   = nx; self.ny = ny
-        self.Fscale  = Fscale; self.EToE = EToE
-        self.EToF  = EToF ; self.vmapM = vmapM
-        self.vmapP = vmapP; self.vmapB = vmapB
-        self.mapB  = mapB ;self.mapM = mapM
-        self.mapP  = mapP
-
+        self.mapM, self.mapP, self.vmapM, self.vmapP, self.vmapB, self.mapB = \
+                BuildMaps2D(l, l.Fmask,VX,VY, EToV, self.EToE, self.EToF, K, l.N, x,y)
 
     def grad(self, u):
         """Compute 2D gradient field of scalar u."""
@@ -703,7 +708,7 @@ class Discretization2D:
         vz =  d.rx*uyr + d.sx*uys - d.ry*uxr - d.sy*uxs
         vx = 0; vy = 0
 
-        if uz!=0:
+        if uz != 0:
             uzr = np.dot(l.Dr,uz)
             uzs = np.dot(l.Ds,uz)
             vx =  d.ry*uzr + d.sy*uzs
@@ -711,62 +716,96 @@ class Discretization2D:
 
         return vx, vy, vz
 
+    def dt_scale(self):
+        """Compute inscribed circle diameter as characteristic for 
+        grid to choose timestep
+        """
+
+        r = self.ldis.r
+        s = self.ldis.s
+
+        # Find vertex nodes
+        vmask1   = (abs(s+r+2) < NODETOL).nonzero()[0]
+        vmask2   = (abs(r-1)   < NODETOL).nonzero()[0]
+        vmask3   = (abs(s-1)   < NODETOL).nonzero()[0]
+        vmask    = np.vstack((vmask1,vmask2,vmask3))
+        vmask    = vmask.T
+        vmaskF   = vmask.reshape(vmask.shape[0]*vmask.shape[1],order='F')
+
+        vx = self.x[vmaskF[:], :]; vy = self.y[vmaskF[:], :]
+
+        # Compute semi-perimeter and area
+        len1 = np.sqrt((vx[0,:]-vx[1,:])**2\
+                +(vy[0,:]-vy[1,:])**2)
+        len2 = np.sqrt((vx[1,:]-vx[2,:])**2\
+                +(vy[1,:]-vy[2,:])**2)
+        len3 = np.sqrt((vx[2,:]-vx[0,:])**2\
+                +(vy[2,:]-vy[0,:])**2)
+        sper = (len1 + len2 + len3)/2.0
+        area = np.sqrt(sper*(sper-len1)*(sper-len2)*(sper-len3))
+
+        # Compute scale using radius of inscribed circle
+        return area/sper
+
 
 
 
 # {{{ Maxwell's equations
-def Maxwell2D(d, Hx, Hy, Ez, FinalTime):
-    """function [Hx,Hy,Ez] = Maxwell2D(Hx, Hy, Ez, FinalTime)
-    Purpose :Integrate TM-mode Maxwell's until FinalTime starting with initial conditions Hx,Hy,Ez"""
+
+def Maxwell2D(d, Hx, Hy, Ez, final_time):
+    """Integrate TM-mode Maxwell's until final_time starting 
+    with initial conditions Hx,Hy,Ez.
+    """
     l = d.ldis
 
     time = 0
 
     # Runge-Kutta residual storage
-    resHx = np.zeros((l.Np, d.K))
-    resHy = np.zeros((l.Np, d.K))
-    resEz = np.zeros((l.Np, d.K))
+    resHx = np.zeros_like(Hx)
+    resHy = np.zeros_like(Hx)
+    resEz = np.zeros_like(Hx)
 
-    #compute time step size
-    rLGL = JacobiGQ(0,0,l.N)[0]; rmin = abs(rLGL[0]-rLGL[1])
-    dtscale = dtscale2D(l.r,l.s,d.x,d.y); dt = dtscale.min()*rmin*2/3
+    # compute time step size
+    rLGL = JacobiGQ(0,0,l.N)[0]
+    rmin = abs(rLGL[0]-rLGL[1])
+    dt_scale = d.dt_scale()
+    dt = dt_scale.min()*rmin*2/3
 
-    #pts = mv.points3d(x.flatten(), y.flatten(), Ez.flatten(),
-            #colormap="copper")
+    pts = mv.points3d(d.x.flatten(), d.y.flatten(), Ez.flatten(),
+            colormap="copper")
 
-    #outer time step loop
-    while (time<FinalTime):
+    # outer time step loop
+    while (time<final_time):
 
-        if(time+dt>FinalTime):
-            dt = FinalTime-time
+        if time+dt>final_time:
+            dt = final_time-time
 
-        for INTRK in range(5):
-            #compute right hand side of TM-mode Maxwell's equations
-            rhsHx, rhsHy, rhsEz = MaxwellRHS2D(d, Hx,Hy,Ez)
+        for a, b in zip(rk4a, rk4b):
+            # compute right hand side of TM-mode Maxwell's equations
+            rhsHx, rhsHy, rhsEz = MaxwellRHS2D(d, Hx, Hy, Ez)
 
-            #initiate and increment Runge-Kutta residuals
-            resHx = rk4a[INTRK]*resHx + dt*rhsHx
-            resHy = rk4a[INTRK]*resHy + dt*rhsHy
-            resEz = rk4a[INTRK]*resEz + dt*rhsEz
+            # initiate and increment Runge-Kutta residuals
+            resHx = a*resHx + dt*rhsHx
+            resHy = a*resHy + dt*rhsHy
+            resEz = a*resEz + dt*rhsEz
 
-            #update fields
-            Hx = Hx+rk4b[INTRK]*resHx
-            Hy = Hy+rk4b[INTRK]*resHy
-            Ez = Ez+rk4b[INTRK]*resEz
+            # update fields
+            Hx = Hx+b*resHx
+            Hy = Hy+b*resHy
+            Ez = Ez+b*resEz
 
         # Increment time
         time = time+dt
         print la.norm(Ez)
 
-        #pts.mlab_source.z = Ez.flatten()
+        pts.mlab_source.z = Ez.flatten()
 
     return Hx, Hy, Ez, time
 
 
 
 def MaxwellRHS2D(discr, Hx, Hy, Ez):
-    """function [rhsHx, rhsHy, rhsEz] = MaxwellRHS2D(Hx,Hy,Ez)
-    Purpose  : Evaluate RHS flux in 2D Maxwell TM form"""
+    """Evaluate RHS flux in 2D Maxwell TM form."""
 
     d = discr
     l = discr.ldis
@@ -794,69 +833,44 @@ def MaxwellRHS2D(discr, Hx, Hy, Ez):
     dHy[I,J] = 0
     dEz[I,J] = 2*Ez[Iz,Jz]
 
-    #evaluate upwind fluxes
+    # evaluate upwind fluxes
     alpha  = 1.0
     ndotdH =  d.nx*dHx + d.ny*dHy
     fluxHx =  d.ny*dEz + alpha*(ndotdH*d.nx-dHx)
     fluxHy = -d.nx*dEz + alpha*(ndotdH*d.ny-dHy)
     fluxEz = -d.nx*dHy + d.ny*dHx - alpha*dEz
 
-    #local derivatives of fields
-    Ezx,Ezy = d.grad(Ez)
-    CuHx,CuHy,CuHz = d.curl(Hx,Hy,0)
+    # local derivatives of fields
+    Ezx, Ezy = d.grad(Ez)
+    CuHx, CuHy, CuHz = d.curl(Hx,Hy,0)
 
-    #compute right hand sides of the PDE's
+    # compute right hand sides of the PDE's
     rhsHx = -Ezy  + np.dot(l.LIFT, d.Fscale*fluxHx)/2.0
     rhsHy =  Ezx  + np.dot(l.LIFT, d.Fscale*fluxHy)/2.0
     rhsEz =  CuHz + np.dot(l.LIFT, d.Fscale*fluxEz)/2.0
     return rhsHx, rhsHy, rhsEz
 # }}}
 
+
+
+
 # {{{ test
 def test():
-    N = 5
+    d = Discretization2D(LocalDiscretization2D(5),
+            *MeshReaderGambit2D('Maxwell025.neu'))
 
-    #Read in Mesh
-    Nv, VX, VY, K, EToV = MeshReaderGambit2D('Maxwell025.neu')
-
-    l = LocalDiscretization2D(5)
-
-
-    # build coordinates of all the nodes
-
-    # find all the nodes that lie on each edge
-    #Create surface integral terms
-
-    #calculate geometric factors
-    # Build connectivity matrix
-
-    # Build connectivity maps
-
-    #Compute weak operators (could be done in preprocessing to save time)
-    #Vr, Vs = GradVandermonde2D(N, l.r, l.s)
-    #invVV = la.inv(np.dot(V,V.T))
-    #Drw = np.dot(np.dot(V,Vr.T),invVV); 
-    #Dsw = np.dot(np.dot(V,Vs.T),invVV)
-
-    # get the global variables
-    d = Discretization2D(l,Nv,VX,VY, K,EToV)
-
-    #set initial conditions
+    # set initial conditions
     mmode = 1; nmode = 1
     Ez = np.sin(mmode*np.pi*d.x)*np.sin(nmode*np.pi*d.y)
-    Hx = np.zeros((l.Np, K))
-    Hy = np.zeros((l.Np, K))
+    Hx = np.zeros((d.ldis.Np, d.K))
+    Hy = np.zeros((d.ldis.Np, d.K))
 
-    #Solve Problem
-    FinalTime = 1
-    Hx,Hy,Ez,time = Maxwell2D(d, Hx,Hy,Ez,FinalTime)
-
-
-
-
+    final_time = 1
+    Hx,Hy,Ez,time = Maxwell2D(d, Hx,Hy,Ez,final_time)
 
 if __name__ == "__main__":
     test()
+
 # }}}
 
 # vim: foldmethod=marker
