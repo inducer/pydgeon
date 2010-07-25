@@ -337,8 +337,8 @@ def Vandermonde2D(N, r, s):
     return V2D
 
 def GradJacobiP(z, alpha, beta, N):
-    """Evaluate the derivative of the orthonormal Jacobi polynomial 
-    of type (alpha, beta)>-1, at points x for order N and 
+    """Evaluate the derivative of the orthonormal Jacobi polynomial
+    of type (alpha, beta)>-1, at points x for order N and
     returns dP[1:len(xp))].
     """
     Nx = np.int32(z.shape[0])
@@ -351,7 +351,7 @@ def GradJacobiP(z, alpha, beta, N):
     return dP
 
 def GradSimplex2DP(a, b, id, jd):
-    """Return the derivatives of the modal basis (id, jd) on the 
+    """Return the derivatives of the modal basis (id, jd) on the
     2D simplex at (a, b).
     """
 
@@ -383,7 +383,7 @@ def GradSimplex2DP(a, b, id, jd):
 
 
 def GradVandermonde2D(N, r, s):
-    """Initialize the gradient of the modal basis 
+    """Initialize the gradient of the modal basis
     (i, j) at (r, s) at order N.
     """
 
@@ -401,7 +401,7 @@ def GradVandermonde2D(N, r, s):
     return V2Dr, V2Ds
 
 def Dmatrices2D(N, r, s, V):
-    """Initialize the (r, s) differentiation matriceon the simplex, 
+    """Initialize the (r, s) differentiation matriceon the simplex,
     evaluated at (r, s) at order N.
     """
 
@@ -450,7 +450,7 @@ def GeometricFactors2D(x, y, Dr, Ds):
     return rx, sx, ry, sy, J
 
 def Normals2D(ldis, x, y, K):
-    """Compute outward pointing normals at elements faces 
+    """Compute outward pointing normals at elements faces
     and surface Jacobians.
     """
 
@@ -491,7 +491,7 @@ def Normals2D(ldis, x, y, K):
     return nx, ny, sJ
 
 def Connect2D(EToV):
-    """Build global connectivity arrays for grid based on 
+    """Build global connectivity arrays for grid based on
     standard EToV input array from grid generator.
     """
 
@@ -552,9 +552,9 @@ def Connect2D(EToV):
     return  EToE, EToF
 
 def sub2ind(size, I, J):
-    """Return the linear index equivalent to the row and column subscripts 
-    I and J for a matrix of size siz. siz is a vector with ndim(A) elements 
-    (in this case, 2), where siz(1) is the number of rows and siz(2) is the 
+    """Return the linear index equivalent to the row and column subscripts
+    I and J for a matrix of size siz. siz is a vector with ndim(A) elements
+    (in this case, 2), where siz(1) is the number of rows and siz(2) is the
     number of columns.
     """
     ind = I*size[1]+J
@@ -673,7 +673,7 @@ class LocalDiscretization2D:
         generate a tesselation of the reference element."""
 
         node_tuples = [
-                (i,j) 
+                (i,j)
                 for i in range(self.N+1)
                 for j in range(self.N+1-i)
                 ]
@@ -754,7 +754,7 @@ class Discretization2D:
         return vx, vy, vz
 
     def dt_scale(self):
-        """Compute inscribed circle diameter as characteristic for 
+        """Compute inscribed circle diameter as characteristic for
         grid to choose timestep
         """
 
@@ -794,16 +794,129 @@ class Discretization2D:
         return (np.arange(0, self.K*Np, Np)[:,np.newaxis,np.newaxis]
                 + submesh_indices[np.newaxis,:,:]).reshape(-1, submesh_indices.shape[1])
 
+# }}}
+
+
+# {{{ Maxwell's equations -----------------------------------------------------
+
+MAXWELL_VOLUME_KERNEL = """
+__kernel void MaxwellsVolume2d(int K,
+                               read_only __global float *g_Q,
+                               __global float *g_rhsQ,
+                               read_only __global float4 *g_DrDs,
+                               read_only __global float *g_vgeo,
+                               __local  float *s_Q)
+{
+  const int p_Np  = ((p_N+1)*(p_N+2)/2);
+  const int BSIZE = (16*((p_Np+15)/16));
+
+  /* LOCKED IN to using Np threads per block */
+  const int n = get_local_id(0);
+  const int k = get_group_id(0);
+
+  if(k>=K) return;
+
+  /* "coalesced"  */
+  int m = n+k*3*BSIZE;
+  int id = n;
+  s_Q[id] = g_Q[m]; m+=BSIZE; id+=BSIZE;
+  s_Q[id] = g_Q[m]; m+=BSIZE; id+=BSIZE;
+  s_Q[id] = g_Q[m];
+
+  barrier(CLK_LOCAL_MEM_FENCE);
+
+  float dHxdr=0,dHxds=0;
+  float dHydr=0,dHyds=0;
+  float dEzdr=0,dEzds=0;
+
+  float Q;
+  for(m=0;p_Np-m;){
+    float4 D = g_DrDs[(n+m*BSIZE)];
+
+    id = m;
+    Q = s_Q[id]; dHxdr += D.x*Q; dHxds += D.y*Q;  id += BSIZE;
+    Q = s_Q[id]; dHydr += D.x*Q; dHyds += D.y*Q;  id += BSIZE;
+    Q = s_Q[id]; dEzdr += D.x*Q; dEzds += D.y*Q;
+    ++m;
+  }
+
+  const float drdx= g_vgeo[0+4*k];
+  const float drdy= g_vgeo[1+4*k];
+  const float dsdx= g_vgeo[2+4*k];
+  const float dsdy= g_vgeo[3+4*k];
+
+  m = n+3*BSIZE*k;
+  g_rhsQ[m] = -(drdy*dEzdr+dsdy*dEzds); m += BSIZE;
+  g_rhsQ[m] =  (drdx*dEzdr+dsdx*dEzds); m += BSIZE;
+  g_rhsQ[m] =  (drdx*dHydr+dsdx*dHyds - drdy*dHxdr-dsdy*dHxds);
+}
+"""
+
+def MaxwellLocalGPU(discr, Hx, Hy, Ez):
+    # local derivatives of fields
+    Ezx, Ezy = d.grad(Ez)
+    CuHx, CuHy, CuHz = d.curl(Hx, Hy,0)
+
+    # compute right hand sides of the PDE's
+    rhsHx = -Ezy  + np.dot(l.LIFT, d.Fscale*fluxHx)/2.0
+    rhsHy =  Ezx  + np.dot(l.LIFT, d.Fscale*fluxHy)/2.0
+    rhsEz =  CuHz + np.dot(l.LIFT, d.Fscale*fluxEz)/2.0
+    return rhsHx, rhsHy, rhsEz
+
+def MaxwellRHS2D(discr, Hx, Hy, Ez):
+    """Evaluate RHS flux in 2D Maxwell TM form."""
+
+    d = discr
+    l = discr.ldis
+
+    # Define field differences at faces
+    vmapM = d.vmapM.reshape(l.Nfp*l.Nfaces, d.K, order='F')
+    vmapP = d.vmapP.reshape(l.Nfp*l.Nfaces, d.K, order='F')
+    Im, Jm = ind2sub(vmapM, l.Np)
+    Ip, Jp = ind2sub(vmapP, l.Np)
+
+    flux_shape = (l.Nfp*l.Nfaces, d.K)
+    dHx = np.zeros(flux_shape)
+    dHx = Hx[Im, Jm]-Hx[Ip, Jp]
+    dHy = np.zeros(flux_shape)
+    dHy = Hy[Im, Jm]-Hy[Ip, Jp]
+    dEz = np.zeros(flux_shape)
+    dEz = Ez[Im, Jm]-Ez[Ip, Jp]
+
+    # Impose reflective boundary conditions (Ez+ = -Ez-)
+    size_H = l.Nfp*l.Nfaces
+    I, J = ind2sub(d.mapB, size_H)
+    Iz, Jz = ind2sub(d.vmapB, l.Np)
+
+    dHx[I, J] = 0
+    dHy[I, J] = 0
+    dEz[I, J] = 2*Ez[Iz, Jz]
+
+    # evaluate upwind fluxes
+    alpha  = 1.0
+    ndotdH =  d.nx*dHx + d.ny*dHy
+    fluxHx =  d.ny*dEz + alpha*(ndotdH*d.nx-dHx)
+    fluxHy = -d.nx*dEz + alpha*(ndotdH*d.ny-dHy)
+    fluxEz = -d.nx*dHy + d.ny*dHx - alpha*dEz
+
+    # local derivatives of fields
+    Ezx, Ezy = d.grad(Ez)
+    CuHx, CuHy, CuHz = d.curl(Hx, Hy,0)
+
+    # compute right hand sides of the PDE's
+    rhsHx = -Ezy  + np.dot(l.LIFT, d.Fscale*fluxHx)/2.0
+    rhsHy =  Ezx  + np.dot(l.LIFT, d.Fscale*fluxHy)/2.0
+    rhsEz =  CuHz + np.dot(l.LIFT, d.Fscale*fluxEz)/2.0
+    return rhsHx, rhsHy, rhsEz
 
 
 
-
-# {{{ Maxwell's equations
 
 def Maxwell2D(d, Hx, Hy, Ez, final_time):
-    """Integrate TM-mode Maxwell's until final_time starting 
+    """Integrate TM-mode Maxwell's until final_time starting
     with initial conditions Hx, Hy, Ez.
     """
+
     l = d.ldis
 
     time = 0
@@ -853,52 +966,6 @@ def Maxwell2D(d, Hx, Hy, Ez, final_time):
 
 
 
-def MaxwellRHS2D(discr, Hx, Hy, Ez):
-    """Evaluate RHS flux in 2D Maxwell TM form."""
-
-    d = discr
-    l = discr.ldis
-
-    # Define field differences at faces
-    vmapM = d.vmapM.reshape(l.Nfp*l.Nfaces, d.K, order='F')
-    vmapP = d.vmapP.reshape(l.Nfp*l.Nfaces, d.K, order='F')
-    Im, Jm = ind2sub(vmapM, l.Np)
-    Ip, Jp = ind2sub(vmapP, l.Np)
-
-    flux_shape = (l.Nfp*l.Nfaces, d.K)
-    dHx = np.zeros(flux_shape)
-    dHx = Hx[Im, Jm]-Hx[Ip, Jp]
-    dHy = np.zeros(flux_shape)
-    dHy = Hy[Im, Jm]-Hy[Ip, Jp]
-    dEz = np.zeros(flux_shape)
-    dEz = Ez[Im, Jm]-Ez[Ip, Jp]
-
-    # Impose reflective boundary conditions (Ez+ = -Ez-)
-    size_H = l.Nfp*l.Nfaces
-    I, J = ind2sub(d.mapB, size_H)
-    Iz, Jz = ind2sub(d.vmapB, l.Np)
-
-    dHx[I, J] = 0
-    dHy[I, J] = 0
-    dEz[I, J] = 2*Ez[Iz, Jz]
-
-    # evaluate upwind fluxes
-    alpha  = 1.0
-    ndotdH =  d.nx*dHx + d.ny*dHy
-    fluxHx =  d.ny*dEz + alpha*(ndotdH*d.nx-dHx)
-    fluxHy = -d.nx*dEz + alpha*(ndotdH*d.ny-dHy)
-    fluxEz = -d.nx*dHy + d.ny*dHx - alpha*dEz
-
-    # local derivatives of fields
-    Ezx, Ezy = d.grad(Ez)
-    CuHx, CuHy, CuHz = d.curl(Hx, Hy,0)
-
-    # compute right hand sides of the PDE's
-    rhsHx = -Ezy  + np.dot(l.LIFT, d.Fscale*fluxHx)/2.0
-    rhsHy =  Ezx  + np.dot(l.LIFT, d.Fscale*fluxHy)/2.0
-    rhsEz =  CuHz + np.dot(l.LIFT, d.Fscale*fluxEz)/2.0
-    return rhsHx, rhsHy, rhsEz
-
 # }}}
 
 
@@ -916,8 +983,20 @@ def test():
     Hx = np.zeros((d.ldis.Np, d.K))
     Hy = np.zeros((d.ldis.Np, d.K))
 
-    final_time = 5
-    Hx, Hy, Ez, time = Maxwell2D(d, Hx, Hy, Ez, final_time)
+    Hx, Hy, Ez, time = Maxwell2D(d, Hx, Hy, Ez, final_time=5)
+
+def test():
+    d = Discretization2D(LocalDiscretization2D(5),
+            *MeshReaderGambit2D('Maxwell025.neu'))
+
+    # set initial conditions
+    mmode = 1; nmode = 1
+    Ez = np.sin(mmode*np.pi*d.x)*np.sin(nmode*np.pi*d.y)
+    Hx = np.zeros((d.ldis.Np, d.K))
+    Hy = np.zeros((d.ldis.Np, d.K))
+
+    Hx, Hy, Ez, time = Maxwell2D(d, Hx, Hy, Ez, final_time=5)
+
 
 if __name__ == "__main__":
     test()
