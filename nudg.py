@@ -824,7 +824,7 @@ def Maxwell2D(d, Hx, Hy, Ez, final_time):
                 d.gen_vis_triangles())
 
     # outer time step loop
-    while (time<final_time):
+    while time < final_time:
 
         if time+dt>final_time:
             dt = final_time-time
@@ -874,7 +874,7 @@ def MaxwellRHS2D(discr, Hx, Hy, Ez):
     dEz = Ez[Im, Jm]-Ez[Ip, Jp]
 
     # Impose reflective boundary conditions (Ez+ = -Ez-)
-    size_H= l.Nfp*l.Nfaces
+    size_H = l.Nfp*l.Nfaces
     I, J = ind2sub(d.mapB, size_H)
     Iz, Jz = ind2sub(d.vmapB, l.Np)
 
