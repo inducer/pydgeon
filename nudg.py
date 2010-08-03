@@ -24,12 +24,13 @@ from math import sqrt
 import numpy as np
 import numpy.linalg as la
 
-try:
-    import enthought.mayavi.mlab as mv
-except ImportError:
-    do_vis = False
-else:
-    do_vis = True
+do_vis = False
+#do_vis = True
+if do_vis:
+    try:
+        import enthought.mayavi.mlab as mv
+    except ImportError:
+        do_vis = False
 
 
 NODETOL = 1e-12
@@ -67,7 +68,7 @@ def fact(z):
 
     return g
 
-def MeshReaderGambit2D(file_name):
+def read_2d_gambit_mesh(file_name):
     """Read in basic grid information to build grid
     Note: Gambit(Fluent, Inc) *.neu format is assumed.
 
@@ -81,7 +82,8 @@ def MeshReaderGambit2D(file_name):
 
         # Find number of nodes and number of elements
         dims = inf.readline().split()
-        Nv = np.int(dims[0]); K = np.int32(dims[1])
+        Nv = int(dims[0])
+        K = int(dims[1])
 
         for i in range(2):
             line = inf.readline()
@@ -250,9 +252,8 @@ def Nodes2D(N):
     else:
         alpha = 5.0/3.0
 
-
     # total number of nodes
-    Np = (N+1)*(N+2)/2.0
+    Np = (N+1)*(N+2)//2
 
     # Create equidistributed nodes on equilateral triangle
     L1 = np.zeros((Np,1)); L2 = np.zeros((Np,1)); L3 = np.zeros((Np,1))
@@ -298,7 +299,8 @@ def rstoab(r, s):
     """Transfer from (r, s) -> (a, b) coordinates in triangle.
     """
 
-    Np = len(r); a = np.zeros((Np,1))
+    Np = len(r)
+    a = np.zeros((Np,1))
     for n in range(Np):
         if s[n] != 1:
             a[n] = 2*(1+r[n])/(1-s[n])-1
@@ -635,7 +637,9 @@ def ind2sub(matr, row_size):
 
 class LocalDiscretization2D:
     def __init__(self, N):
-        self.Np = (N+1)*(N+2)/2
+        self.dimensions = 2
+
+        self.Np = (N+1)*(N+2)//2
         self.N = N
         self.Nfp = N+1
         self.Nfaces = 3
@@ -697,6 +701,8 @@ class LocalDiscretization2D:
 class Discretization2D:
     def __init__(self, ldis, Nv, VX, VY, K, EToV):
         l = self.ldis = ldis
+
+        self.dimensions = ldis.dimensions
 
         self.Nv = Nv
         self.VX   = VX
@@ -797,71 +803,9 @@ class Discretization2D:
 # }}}
 
 
+
+
 # {{{ Maxwell's equations -----------------------------------------------------
-
-MAXWELL_VOLUME_KERNEL = """
-__kernel void MaxwellsVolume2d(int K,
-                               read_only __global float *g_Q,
-                               __global float *g_rhsQ,
-                               read_only __global float4 *g_DrDs,
-                               read_only __global float *g_vgeo,
-                               __local  float *s_Q)
-{
-  const int p_Np  = ((p_N+1)*(p_N+2)/2);
-  const int BSIZE = (16*((p_Np+15)/16));
-
-  /* LOCKED IN to using Np threads per block */
-  const int n = get_local_id(0);
-  const int k = get_group_id(0);
-
-  if(k>=K) return;
-
-  /* "coalesced"  */
-  int m = n+k*3*BSIZE;
-  int id = n;
-  s_Q[id] = g_Q[m]; m+=BSIZE; id+=BSIZE;
-  s_Q[id] = g_Q[m]; m+=BSIZE; id+=BSIZE;
-  s_Q[id] = g_Q[m];
-
-  barrier(CLK_LOCAL_MEM_FENCE);
-
-  float dHxdr=0,dHxds=0;
-  float dHydr=0,dHyds=0;
-  float dEzdr=0,dEzds=0;
-
-  float Q;
-  for(m=0;p_Np-m;){
-    float4 D = g_DrDs[(n+m*BSIZE)];
-
-    id = m;
-    Q = s_Q[id]; dHxdr += D.x*Q; dHxds += D.y*Q;  id += BSIZE;
-    Q = s_Q[id]; dHydr += D.x*Q; dHyds += D.y*Q;  id += BSIZE;
-    Q = s_Q[id]; dEzdr += D.x*Q; dEzds += D.y*Q;
-    ++m;
-  }
-
-  const float drdx= g_vgeo[0+4*k];
-  const float drdy= g_vgeo[1+4*k];
-  const float dsdx= g_vgeo[2+4*k];
-  const float dsdy= g_vgeo[3+4*k];
-
-  m = n+3*BSIZE*k;
-  g_rhsQ[m] = -(drdy*dEzdr+dsdy*dEzds); m += BSIZE;
-  g_rhsQ[m] =  (drdx*dEzdr+dsdx*dEzds); m += BSIZE;
-  g_rhsQ[m] =  (drdx*dHydr+dsdx*dHyds - drdy*dHxdr-dsdy*dHxds);
-}
-"""
-
-def MaxwellLocalGPU(discr, Hx, Hy, Ez):
-    # local derivatives of fields
-    Ezx, Ezy = d.grad(Ez)
-    CuHx, CuHy, CuHz = d.curl(Hx, Hy,0)
-
-    # compute right hand sides of the PDE's
-    rhsHx = -Ezy  + np.dot(l.LIFT, d.Fscale*fluxHx)/2.0
-    rhsHy =  Ezx  + np.dot(l.LIFT, d.Fscale*fluxHy)/2.0
-    rhsEz =  CuHz + np.dot(l.LIFT, d.Fscale*fluxEz)/2.0
-    return rhsHx, rhsHy, rhsEz
 
 def MaxwellRHS2D(discr, Hx, Hy, Ez):
     """Evaluate RHS flux in 2D Maxwell TM form."""
@@ -962,6 +906,8 @@ def Maxwell2D(d, Hx, Hy, Ez, final_time):
         if do_vis:
             vis_mesh.mlab_source.z = Ez.T.flatten()
 
+        print la.norm(Ez)
+
     return Hx, Hy, Ez, time
 
 
@@ -975,19 +921,7 @@ def Maxwell2D(d, Hx, Hy, Ez, final_time):
 
 def test():
     d = Discretization2D(LocalDiscretization2D(5),
-            *MeshReaderGambit2D('Maxwell025.neu'))
-
-    # set initial conditions
-    mmode = 1; nmode = 1
-    Ez = np.sin(mmode*np.pi*d.x)*np.sin(nmode*np.pi*d.y)
-    Hx = np.zeros((d.ldis.Np, d.K))
-    Hy = np.zeros((d.ldis.Np, d.K))
-
-    Hx, Hy, Ez, time = Maxwell2D(d, Hx, Hy, Ez, final_time=5)
-
-def test():
-    d = Discretization2D(LocalDiscretization2D(5),
-            *MeshReaderGambit2D('Maxwell025.neu'))
+            *read_2d_gambit_mesh('Maxwell025.neu'))
 
     # set initial conditions
     mmode = 1; nmode = 1
