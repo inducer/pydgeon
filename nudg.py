@@ -28,7 +28,7 @@ do_vis = False
 #do_vis = True
 if do_vis:
     try:
-        import enthought.mayavi.mlab as mv
+        import enthought.mayavi.mlab as mayavi
     except ImportError:
         do_vis = False
 
@@ -146,7 +146,7 @@ def JacobiP(x, alpha, beta, N):
 
             bnew = -(alpha*alpha-beta*beta)/(h1*(h1+2.))
             PL[:, i+1] = ( -aold*PL[:, i-1] + np.multiply(x-bnew, PL[:, i]) )/anew
-            aold =anew
+            aold = anew
 
     return PL[:, N]
 
@@ -877,7 +877,8 @@ def Maxwell2D(d, Hx, Hy, Ez, final_time):
     dt = dt_scale.min()*rmin*2/3
 
     if do_vis:
-        vis_mesh = mv.triangular_mesh(d.x.T.flatten(), d.y.T.flatten(), Ez.T.flatten(),
+        vis_mesh = mayavi.triangular_mesh(
+                d.x.T.flatten(), d.y.T.flatten(), Ez.T.flatten(),
                 d.gen_vis_triangles())
 
     # outer time step loop

@@ -28,41 +28,51 @@ import pyopencl.array as cl_array
 
 
 
-class GPUDiscretization2D(Discretization2D):
+class CLDiscretization2D(Discretization2D):
     def __init__(self, ldis, Nv, VX, VY, K, EToV):
         Discretization2D.__init__(self, ldis, Nv, VX, VY, K, EToV)
 
         self.ctx = cl.create_some_context()
         self.queue = cl.CommandQueue(self.ctx)
 
-        # FIXME BSIZE
-        drds_gpu = np.empty((ldis.Np, ldis.Np, 4), dtype=np.float32)
-        drds_gpu[:,:,0] = ldis.Dr.T
-        drds_gpu[:,:,1] = ldis.Ds.T
-        self.diffmatrices_gpu = cl_array.to_device(self.ctx, self.queue, drds_gpu)
+        self.block_size = 16*((ldis.Np+15)//16)
 
-        drdx_gpu = np.empty((self.K, self.dimensions**2), dtype=np.float32)
-        drdx_gpu[:,0] = self.rx[0]
-        drdx_gpu[:,1] = self.ry[0]
-        drdx_gpu[:,2] = self.sx[0]
-        drdx_gpu[:,3] = self.sy[0]
-        self.drdx_gpu = cl_array.to_device(self.ctx, self.queue, drdx_gpu)
+        self.prepare_gpu_data()
 
-    def to_gpu(self, vec):
-        vec = np.asarray(vec, dtype=np.float32, order="F")
-        return cl_array.to_device(self.ctx, self.queue, vec)
+    def prepare_gpu_data(self):
+        ldis = self.ldis
+
+        drds_dev = np.empty((ldis.Np, self.block_size, 4), dtype=np.float32)
+        drds_dev[:,:ldis.Np,0] = ldis.Dr.T
+        drds_dev[:,:ldis.Np,1] = ldis.Ds.T
+        self.diffmatrices_dev = cl_array.to_device(self.ctx, self.queue, drds_dev)
+
+        drdx_dev = np.empty((self.K, self.dimensions**2), dtype=np.float32)
+        drdx_dev[:,0] = self.rx[0]
+        drdx_dev[:,1] = self.ry[0]
+        drdx_dev[:,2] = self.sx[0]
+        drdx_dev[:,3] = self.sy[0]
+        self.drdx_dev = cl_array.to_device(self.ctx, self.queue, drdx_dev)
+
+    def to_dev(self, vec):
+        dev_vec = np.empty(dtype=np.float32, order="F",
+                shape=(self.block_size, self.K))
+        dev_vec[:self.ldis.Np, :] = vec
+        return cl_array.to_device(self.ctx, self.queue, dev_vec)
+
+    def from_dev(self, vec):
+        return vec.get()[:self.ldis.Np, :]
 
     def volume_empty(self):
-        # FIXME BSIZE
         return cl_array.Array(
                 self.ctx, queue=self.queue,
-                shape=(self.ldis.Np, self.K, ), 
+                shape=(self.block_size, self.K),
                 dtype=np.float32, order="F")
 
 
 
 
-
+# {{{ kernels
 
 MAXWELL_VOLUME_KERNEL = """
 #define p_N %(N)d
@@ -87,13 +97,13 @@ __kernel void MaxwellsVolume2d(int K,
   int m = n+k*BSIZE;
   int id = n;
 
-  __local float s_Hx[BSIZE];
-  __local float s_Hy[BSIZE];
-  __local float s_Ez[BSIZE];
+  __local float l_Hx[BSIZE];
+  __local float l_Hy[BSIZE];
+  __local float l_Ez[BSIZE];
 
-  s_Hx[id] = g_Hx[m];
-  s_Hy[id] = g_Hy[m];
-  s_Ez[id] = g_Ez[m];
+  l_Hx[id] = g_Hx[m];
+  l_Hy[id] = g_Hy[m];
+  l_Ez[id] = g_Ez[m];
 
   barrier(CLK_LOCAL_MEM_FENCE);
 
@@ -107,9 +117,9 @@ __kernel void MaxwellsVolume2d(int K,
     float4 D = g_DrDs[(n+m*BSIZE)];
 
     id = m;
-    Q = s_Hx[m]; dHxdr += D.x*Q; dHxds += D.y*Q;
-    Q = s_Hy[m]; dHydr += D.x*Q; dHyds += D.y*Q; 
-    Q = s_Ez[m]; dEzdr += D.x*Q; dEzds += D.y*Q;
+    Q = l_Hx[m]; dHxdr += D.x*Q; dHxds += D.y*Q;
+    Q = l_Hy[m]; dHydr += D.x*Q; dHyds += D.y*Q;
+    Q = l_Ez[m]; dEzdr += D.x*Q; dEzds += D.y*Q;
   }
 
   const float drdx = g_vgeo[0+4*k];
@@ -123,6 +133,108 @@ __kernel void MaxwellsVolume2d(int K,
   g_rhsEz[m] =  (drdx*dHydr+dsdx*dHyds - drdy*dHxdr-dsdy*dHxds);
 }
 """
+
+MAXWELL_SURFACE_KERNEL = """
+#define p_N %(N)d
+#define p_Np %(Np)d
+#define p_Nfp %(Nfp)d
+#define p_Nfaces %(Nfaces)d
+#define p_Nafp (p_Nfaces*p_Nfp)
+#define BSIZE %(BSIZE)d
+
+__kernel void MaxwellsSurface2d(int K,
+                              read_only __global float *g_Hx,
+                              read_only __global float *g_Hy,
+                              read_only __global float *g_Ez,
+                              __global float *g_rhsHx,
+                              __global float *g_rhsHy,
+                              __global float *g_rhsEz,
+                              read_only __global float *g_surfinfo,
+                              read_only __global float4 *g_LIFT)
+{
+  /* LOCKED IN to using Np threads per block */
+  const int n = get_local_id(0);
+  const int k = get_group_id(0);
+
+  __local l_fluxHx[p_Nafp];
+  __local l_fluxHy[p_Nafp];
+  __local l_fluxEz[p_Nafp];
+
+  int m;
+
+  /* grab surface nodes and store flux in shared memory */
+  if (n < p_Nafp)
+  {
+    /* coalesced reads (maybe) */
+    m = 6*(k*p_Nafp)+n;
+
+    const  int   idM = g_surfinfo[m]; m += p_Nfp*p_Nfaces;
+    int          idP = g_surfinfo[m]; m += p_Nfp*p_Nfaces;
+    const  float Fsc = g_surfinfo[m]; m += p_Nfp*p_Nfaces;
+    const  float Bsc = g_surfinfo[m]; m += p_Nfp*p_Nfaces;
+    const  float nx  = g_surfinfo[m]; m += p_Nfp*p_Nfaces;
+    const  float ny  = g_surfinfo[m];
+
+    /* check if idP<0  */
+    float dHx=0, dHy=0, dEz=0;
+    if (idP>=0)
+    {
+      dHx = Fsc*(    g_Hx[idP] - g_Hx[idM]);
+      dHy = Fsc*(    g_Hy[idP] - g_Hy[idM]);
+      dEz = Fsc*(Bsc*g_Ez[idP] - g_Ez[idM]);
+    }
+
+    const float ndotdH = nx*dHx + ny*dHy;
+
+    m = n;
+    l_fluxHx[m] = -ny*dEz + dHx - ndotdH*nx;
+    l_fluxHy[m] =  nx*dEz + dHy - ndotdH*ny;
+    l_fluxEz[m] =  nx*dHy - ny*dHx + dEz;
+  }
+
+  /* make sure all element data points are cached */
+  barrier(CLK_LOCAL_MEM_FENCE);
+
+  if (n < p_Np)
+  {
+    float rhsHx = 0, rhsHy = 0, rhsEz = 0;
+
+    int sk = n;
+
+    /* can manually unroll to 3 because there are 3 faces */
+    for (m=0;p_Nfaces*p_Nfp-m;)
+    {
+      float4 L = g_LIFT[sk];
+      sk += p_Np;
+
+      rhsHx += L.x*l_fluxHx[m];
+      rhsHy += L.x*l_fluxHy[m];
+      rhsEz += L.x*l_fluxEz[m];
+      ++m;
+
+      /* broadcast */
+      rhsHx += L.y*l_fluxHx[m];
+      rhsHy += L.y*l_fluxHy[m];
+      rhsEz += L.y*l_fluxEz[m];
+      ++m;
+
+      /* broadcast */
+      rhsHx += L.z*l_fluxHx[m];
+      rhsHy += L.z*l_fluxHy[m];
+      rhsEz += L.z*l_fluxEz[m];
+      ++m;
+    }
+
+    m = n+k*BSIZE;
+
+    g_rhsHx[m] += rhsHx;
+    g_rhsHy[m] += rhsHy;
+    g_rhsEz[m] += rhsEz;
+  }
+}
+"""
+
+# }}}
 
 
 
@@ -141,7 +253,7 @@ def MaxwellLocalRef(d, Hx, Hy, Ez):
 
 
 
-class MaxwellsRhs2DGPU:
+class CLMaxwellsRhs2D:
     def __init__(self, discr):
         self.discr = discr
 
@@ -149,10 +261,21 @@ class MaxwellsRhs2DGPU:
                 MAXWELL_VOLUME_KERNEL % {
                     "N": discr.ldis.N,
                     "Np": discr.ldis.Np,
-                    "BSIZE": discr.ldis.Np,
+                    "BSIZE": discr.block_size,
                     }
                 ).build().MaxwellsVolume2d
         self.volume_kernel.set_scalar_arg_dtypes([np.int32] + 8*[None])
+
+        self.surface_kernel = cl.Program(discr.ctx,
+                MAXWELL_SURFACE_KERNEL % {
+                    "N": discr.ldis.N,
+                    "Np": discr.ldis.Np,
+                    "Nfp": discr.ldis.Nfp,
+                    "Nfaces": discr.ldis.Nfaces,
+                    "BSIZE": discr.block_size,
+                    }
+                ).build().MaxwellsSurface2d
+        self.surface_kernel.set_scalar_arg_dtypes([np.int32] + 8*[None])
 
     def local(self, Hx, Hy, Ez):
         d = self.discr
@@ -161,15 +284,14 @@ class MaxwellsRhs2DGPU:
         rhsHy = d.volume_empty()
         rhsEz = d.volume_empty()
 
-        # FIXME BSIZE
-        self.volume_kernel(d.queue, (d.K*d.ldis.Np,), (d.ldis.Np,),
-                d.K, 
+        self.volume_kernel(d.queue, 
+                (d.K*d.block_size,), (d.block_size,),
+                d.K,
                 Hx.data, Hy.data, Ez.data,
                 rhsHx.data, rhsHy.data, rhsEz.data,
-                d.diffmatrices_gpu.data, d.drdx_gpu.data)
+                d.diffmatrices_dev.data, d.drdx_dev.data)
 
         return rhsHx, rhsHy, rhsEz
-
 
 
 
@@ -179,7 +301,7 @@ class MaxwellsRhs2DGPU:
 def test():
     from nudg import read_2d_gambit_mesh
     from nudg import LocalDiscretization2D
-    d = GPUDiscretization2D(LocalDiscretization2D(5),
+    d = CLDiscretization2D(LocalDiscretization2D(5),
             *read_2d_gambit_mesh('Maxwell025.neu'))
 
     # set initial conditions
@@ -188,15 +310,18 @@ def test():
     Hx = np.zeros((d.ldis.Np, d.K))
     Hy = np.zeros((d.ldis.Np, d.K))
 
-    Ez_gpu = d.to_gpu(Ez.astype(np.float32))
-    Hx_gpu = d.to_gpu(Hx.astype(np.float32))
-    Hy_gpu = d.to_gpu(Hy.astype(np.float32))
+    Ez_dev = d.to_dev(Ez.astype(np.float32))
+    Hx_dev = d.to_dev(Hx.astype(np.float32))
+    Hy_dev = d.to_dev(Hy.astype(np.float32))
 
-    gpu_max = MaxwellsRhs2DGPU(d)
-    rhsHx_gpu, rhsHy_gpu, rhsEz_gpu = gpu_max.local(Ez_gpu, Hx_gpu, Hy_gpu)
+    dev_max = CLMaxwellsRhs2D(d)
+    rhsHx_dev, rhsHy_dev, rhsEz_dev = dev_max.local(Ez_dev, Hx_dev, Hy_dev)
     rhsHx, rhsHy, rhsEz = MaxwellLocalRef(d, Ez, Hx, Hy)
 
-    rhsEz2 = rhsEz_gpu.get()
+    rhsEz2 = d.from_dev(rhsEz_dev)
+    print rhsEz2[:,0]
+    print rhsEz[:,0]
+
     print la.norm(rhsEz2 - rhsEz)/la.norm(rhsEz)
     #Hx, Hy, Ez, time = Maxwell2D(d, Hx, Hy, Ez, final_time=5)
 
