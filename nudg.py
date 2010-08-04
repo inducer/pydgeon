@@ -463,39 +463,40 @@ def Normals2D(ldis, x, y, K):
     """
 
     l = ldis
-    xr = np.dot(l.Dr, x)
-    yr = np.dot(l.Dr, y)
-    xs = np.dot(l.Ds, x)
-    ys = np.dot(l.Ds, y)
+    xr = np.dot(l.Dr, x.T).T
+    yr = np.dot(l.Dr, y.T).T
+    xs = np.dot(l.Ds, x.T).T
+    ys = np.dot(l.Ds, y.T).T
     J = xr*ys-xs*yr
 
     # interpolate geometric factors to face nodes
-    fxr = xr[l.FmaskF, :]; fxs = xs[l.FmaskF, :]
-    fyr = yr[l.FmaskF, :]; fys = ys[l.FmaskF, :]
+    fxr = xr[:, l.FmaskF]; fxs = xs[:, l.FmaskF]
+    fyr = yr[:, l.FmaskF]; fys = ys[:, l.FmaskF]
 
     # build normals
-    nx = np.zeros((3*l.Nfp, K))
-    ny = np.zeros((3*l.Nfp, K))
-    fid1 = np.arange(l.Nfp).reshape(l.Nfp,1)
+    nx = np.zeros((K, l.Nafp))
+    ny = np.zeros((K, l.Nafp))
+    fid1 = np.arange(l.Nfp).reshape(1, l.Nfp)
     fid2 = fid1+l.Nfp
     fid3 = fid2+l.Nfp
 
     # face 1
 
-    nx[fid1, :] =  fyr[fid1, :]
-    ny[fid1, :] = -fxr[fid1, :]
+    nx[:, fid1] =  fyr[:, fid1]
+    ny[:, fid1] = -fxr[:, fid1]
 
     # face 2
-    nx[fid2, :] =  fys[fid2, :]-fyr[fid2, :]
-    ny[fid2, :] = -fxs[fid2, :]+fxr[fid2, :]
+    nx[:, fid2] =  fys[:, fid2]-fyr[:, fid2]
+    ny[:, fid2] = -fxs[:, fid2]+fxr[:, fid2]
 
     # face 3
-    nx[fid3, :] = -fys[fid3, :]
-    ny[fid3, :] =  fxs[fid3, :]
+    nx[:, fid3] = -fys[:, fid3]
+    ny[:, fid3] =  fxs[:, fid3]
 
     # normalise
     sJ = np.sqrt(nx*nx+ny*ny)
-    nx = nx/sJ; ny = ny/sJ
+    nx = nx/sJ
+    ny = ny/sJ
     return nx, ny, sJ
 
 def Connect2D(EToV):
@@ -715,8 +716,8 @@ class Discretization2D:
                 +np.outer(VY[vc], 1+l.s))
 
         self.rx, self.sx, self.ry, self.sy, self.J = GeometricFactors2D(x, y, l.Dr, l.Ds)
-        self.nx, self.ny, sJ = Normals2D(l, x.T, y.T, K)
-        self.Fscale = sJ/self.J[:, l.FmaskF].T
+        self.nx, self.ny, sJ = Normals2D(l, x, y, K)
+        self.Fscale = sJ/self.J[:, l.FmaskF]
 
         # element-to-element, element-to-face connectivity
         self.EToE, self.EToF = Connect2D(EToV)
@@ -816,17 +817,17 @@ def MaxwellRHS2D(discr, Hx, Hy, Ez):
     Hyr = Hy.ravel()
     Ezr = Ez.ravel()
 
-    dHx = (Hxr[vmapM]-Hxr[vmapP]).T
-    dHy = (Hyr[vmapM]-Hyr[vmapP]).T
-    dEz = (Ezr[vmapM]-Ezr[vmapP]).T
+    dHx = Hxr[vmapM]-Hxr[vmapP]
+    dHy = Hyr[vmapM]-Hyr[vmapP]
+    dEz = Ezr[vmapM]-Ezr[vmapP]
 
     # Impose reflective boundary conditions (Ez+ = -Ez-)
     J, I = divmod(d.mapB, l.Nafp)
     Jz, Iz = divmod(d.vmapB, l.Np)
 
-    dHx[I, J] = 0
-    dHy[I, J] = 0
-    dEz[I, J] = 2*Ez[Jz, Iz].T
+    dHx[J, I] = 0
+    dHy[J, I] = 0
+    dEz[J, I] = 2*Ez[Jz, Iz]
 
     # evaluate upwind fluxes
     alpha  = 1.0
@@ -840,9 +841,9 @@ def MaxwellRHS2D(discr, Hx, Hy, Ez):
     CuHx, CuHy, CuHz = d.curl(Hx, Hy,0)
 
     # compute right hand sides of the PDE's
-    rhsHx = -Ezy  + np.dot(l.LIFT, d.Fscale*fluxHx).T/2.0
-    rhsHy =  Ezx  + np.dot(l.LIFT, d.Fscale*fluxHy).T/2.0
-    rhsEz =  CuHz + np.dot(l.LIFT, d.Fscale*fluxEz).T/2.0
+    rhsHx = -Ezy  + np.dot(l.LIFT, (d.Fscale*fluxHx).T).T/2.0
+    rhsHy =  Ezx  + np.dot(l.LIFT, (d.Fscale*fluxHy).T).T/2.0
+    rhsEz =  CuHz + np.dot(l.LIFT, (d.Fscale*fluxEz).T).T/2.0
     return rhsHx, rhsHy, rhsEz
 
 
