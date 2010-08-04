@@ -1,5 +1,5 @@
 # PyNudg - the python Nodal DG Environment
-# (C) 2009, 2010 Tim Warburton, Xueyu Zhu, Andreas Kloeckner
+# (C) 2010 Tim Warburton, Andreas Kloeckner
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -37,22 +37,41 @@ class CLDiscretization2D(Discretization2D):
 
         self.block_size = 16*((ldis.Np+15)//16)
 
-        self.prepare_gpu_data()
+        self.prepare_dev_data()
 
-    def prepare_gpu_data(self):
+    def prepare_dev_data(self):
         ldis = self.ldis
 
+        # differentiation matrix
         drds_dev = np.empty((ldis.Np, self.block_size, 4), dtype=np.float32)
         drds_dev[:,:ldis.Np,0] = ldis.Dr.T
         drds_dev[:,:ldis.Np,1] = ldis.Ds.T
         self.diffmatrices_dev = cl_array.to_device(self.ctx, self.queue, drds_dev)
 
+        # geometric coefficients
         drdx_dev = np.empty((self.K, self.dimensions**2), dtype=np.float32)
         drdx_dev[:,0] = self.rx[0]
         drdx_dev[:,1] = self.ry[0]
         drdx_dev[:,2] = self.sx[0]
         drdx_dev[:,3] = self.sy[0]
         self.drdx_dev = cl_array.to_device(self.ctx, self.queue, drdx_dev)
+
+        # lift matrix
+        lift_dev = np.empty((ldis.Nfp, ldis.Np, 4), dtype=np.float32)
+        partitioned_lift = ldis.LIFT.reshape(ldis.Np, ldis.Nfaces, -1)
+        assert partitioned_lift.shape[-1] == ldis.Nfp
+
+        for i in range(ldis.Nfaces):
+            lift_dev[:, :, i] = partitioned_lift[:, i, :].T
+        self.lift_dev = cl_array.to_device(self.ctx, self.queue, lift_dev)
+
+        # surface info
+        surfinfo_dev = np.empty((self.K, ldis.Nfaces, ldis.Nfp, 6), dtype=np.float32)
+        el_p, face_i_p = divmod(self.vmapP, ldis.Np)
+        print el_p.shape
+        surfinfo_dev[:, 0] = el_p * self.block_size + face_i_p
+        el_m, face_i_m = divmod(self.vmapM, ldis.Np)
+        surfinfo_dev[:, 1] = el_m * self.block_size + face_i_m
 
     def to_dev(self, vec):
         dev_vec = np.empty(dtype=np.float32, order="F",
@@ -74,7 +93,7 @@ class CLDiscretization2D(Discretization2D):
 
 # {{{ kernels
 
-MAXWELL_VOLUME_KERNEL = """
+MAXWELL2D_VOLUME_KERNEL = """
 #define p_N %(N)d
 #define p_Np %(Np)d
 #define BSIZE %(BSIZE)d
@@ -134,7 +153,7 @@ __kernel void MaxwellsVolume2d(int K,
 }
 """
 
-MAXWELL_SURFACE_KERNEL = """
+MAXWELL2D_SURFACE_KERNEL = """
 #define p_N %(N)d
 #define p_Np %(Np)d
 #define p_Nfp %(Nfp)d
@@ -168,11 +187,11 @@ __kernel void MaxwellsSurface2d(int K,
     /* coalesced reads (maybe) */
     m = 6*(k*p_Nafp)+n;
 
-    const  int   idM = g_surfinfo[m]; m += p_Nfp*p_Nfaces;
-    int          idP = g_surfinfo[m]; m += p_Nfp*p_Nfaces;
-    const  float Fsc = g_surfinfo[m]; m += p_Nfp*p_Nfaces;
-    const  float Bsc = g_surfinfo[m]; m += p_Nfp*p_Nfaces;
-    const  float nx  = g_surfinfo[m]; m += p_Nfp*p_Nfaces;
+    const  int   idM = g_surfinfo[m]; m += p_Nafp;
+    int          idP = g_surfinfo[m]; m += p_Nafp;
+    const  float Fsc = g_surfinfo[m]; m += p_Nafp;
+    const  float Bsc = g_surfinfo[m]; m += p_Nafp;
+    const  float nx  = g_surfinfo[m]; m += p_Nafp;
     const  float ny  = g_surfinfo[m];
 
     /* check if idP<0  */
@@ -258,7 +277,7 @@ class CLMaxwellsRhs2D:
         self.discr = discr
 
         self.volume_kernel = cl.Program(discr.ctx,
-                MAXWELL_VOLUME_KERNEL % {
+                MAXWELL2D_VOLUME_KERNEL % {
                     "N": discr.ldis.N,
                     "Np": discr.ldis.Np,
                     "BSIZE": discr.block_size,
@@ -267,7 +286,7 @@ class CLMaxwellsRhs2D:
         self.volume_kernel.set_scalar_arg_dtypes([np.int32] + 8*[None])
 
         self.surface_kernel = cl.Program(discr.ctx,
-                MAXWELL_SURFACE_KERNEL % {
+                MAXWELL2D_SURFACE_KERNEL % {
                     "N": discr.ldis.N,
                     "Np": discr.ldis.Np,
                     "Nfp": discr.ldis.Nfp,
@@ -290,6 +309,33 @@ class CLMaxwellsRhs2D:
                 Hx.data, Hy.data, Ez.data,
                 rhsHx.data, rhsHy.data, rhsEz.data,
                 d.diffmatrices_dev.data, d.drdx_dev.data)
+
+        return rhsHx, rhsHy, rhsEz
+
+    def __call__(self, Hx, Hy, Ez):
+        d = self.discr
+        ldis = d.ldis
+
+        rhsHx = d.volume_empty()
+        rhsHy = d.volume_empty()
+        rhsEz = d.volume_empty()
+
+        self.volume_kernel(d.queue, 
+                (d.K*d.block_size,), (d.block_size,),
+                d.K,
+                Hx.data, Hy.data, Ez.data,
+                rhsHx.data, rhsHy.data, rhsEz.data,
+                d.diffmatrices_dev.data, d.drdx_dev.data)
+
+        surf_block_size = max(
+                ldis.Nfp*ldis.Nfaces,
+                ldis.Np)
+
+        self.surface_kernel(d.queue, 
+                (d.K*surf_block_size,), (surf_block_size,),
+                Hx.data, Hy.data, Ez.data,
+                rhsHx.data, rhsHy.data, rhsEz.data,
+                d.surfinfo.data, d.lift_dev.data)
 
         return rhsHx, rhsHy, rhsEz
 
@@ -319,8 +365,6 @@ def test():
     rhsHx, rhsHy, rhsEz = MaxwellLocalRef(d, Ez, Hx, Hy)
 
     rhsEz2 = d.from_dev(rhsEz_dev)
-    print rhsEz2[:,0]
-    print rhsEz[:,0]
 
     print la.norm(rhsEz2 - rhsEz)/la.norm(rhsEz)
     #Hx, Hy, Ez, time = Maxwell2D(d, Hx, Hy, Ez, final_time=5)

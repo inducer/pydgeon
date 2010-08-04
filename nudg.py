@@ -25,7 +25,7 @@ import numpy as np
 import numpy.linalg as la
 
 do_vis = False
-#do_vis = True
+do_vis = True
 if do_vis:
     try:
         import enthought.mayavi.mlab as mayavi
@@ -509,7 +509,7 @@ def Connect2D(EToV):
     # List of local face to local vertex connections
     vn = np.int32([[0,1],[1,2],[0,2]])
 
-    # Build global face to node sparse array
+    # Build global face to node connectivity
     g_face_no = 0
     vert_indices_to_face_numbers = {}
     face_numbers = xrange(Nfaces)
@@ -537,30 +537,20 @@ def Connect2D(EToV):
     element2, face2 = divmod(faces2, Nfaces)
 
     # Rearrange into Nelements x Nfaces sized arrays
-    size = np.array([K, Nfaces])
-    ind = sub2ind([K, Nfaces], element1, face1)
+    ind = element1*Nfaces + face1
 
     EToE = np.outer(np.arange(K), np.ones((1, Nfaces)))
     EToF = np.outer(np.ones((K,1)), np.arange(Nfaces))
     EToE = EToE.reshape(K*Nfaces)
     EToF = EToF.reshape(K*Nfaces)
 
-    EToE[np.int32(ind)] = element2.copy()
-    EToF[np.int32(ind)] = face2.copy()
+    EToE[np.int32(ind)] = element2
+    EToF[np.int32(ind)] = face2
 
     EToE = EToE.reshape(K, Nfaces)
     EToF = EToF.reshape(K, Nfaces)
 
     return  EToE, EToF
-
-def sub2ind(size, I, J):
-    """Return the linear index equivalent to the row and column subscripts
-    I and J for a matrix of size siz. siz is a vector with ndim(A) elements
-    (in this case, 2), where siz(1) is the number of rows and siz(2) is the
-    number of columns.
-    """
-    ind = I*size[1]+J
-    return ind
 
 def BuildMaps2D(ldis, Fmask, VX, VY, EToV, EToE, EToF, K, N, x, y):
     """Connectivity and boundary tables in the K # of Np elements
@@ -573,16 +563,16 @@ def BuildMaps2D(ldis, Fmask, VX, VY, EToV, EToE, EToF, K, N, x, y):
     temp    = np.arange(K*l.Np)
     nodeids = temp.reshape(l.Np, K, order='F').copy()
 
-    vmapM   = np.zeros((l.Nfp, l.Nfaces, K))
-    vmapP   = np.zeros((l.Nfp, l.Nfaces, K))
-    mapM    = np.arange(np.int32(K)*l.Nfp*l.Nfaces)
-    mapP    = mapM.reshape(l.Nfp, l.Nfaces, K).copy()
+    vmapM   = np.zeros((K, l.Nfaces, l.Nfp), dtype=np.intp)
+    vmapP   = np.zeros((K, l.Nfaces, l.Nfp), dtype=np.intp)
+    mapM    = np.arange(np.int32(K)*l.Nfp*l.Nfaces, dtype=np.intp)
+    #mapP    = mapM.reshape(l.Nfp, l.Nfaces, K).copy()
+
     # find index of face nodes with respect to volume node ordering
     for k1 in range(K):
         for f1 in range(l.Nfaces):
-            vmapM[:, f1, k1] = nodeids[Fmask[:, f1], k1]
+            vmapM[k1, f1, :] = nodeids[Fmask[:, f1], k1]
 
-    # need to figure it out
     xtemp = x.reshape(K*l.Np,1, order='F').copy()
     ytemp = y.reshape(K*l.Np,1, order='F').copy()
 
@@ -590,45 +580,43 @@ def BuildMaps2D(ldis, Fmask, VX, VY, EToV, EToE, EToF, K, N, x, y):
     for k1 in range(K):
         for f1 in range(l.Nfaces):
             # find neighbor
-            k2 = EToE[k1, f1]; f2 = EToF[k1, f1]
+            k2 = EToE[k1, f1]
+            f2 = EToF[k1, f1]
 
             # reference length of edge
             v1 = EToV[k1, f1]
             v2 = EToV[k1, 1+np.mod(f1, l.Nfaces-1)]
 
-            refd = np.sqrt((VX[v1]-VX[v2])**2 \
-                    + (VY[v1]-VY[v2])**2 )
             # find find volume node numbers of left and right nodes
-            vidM = vmapM[:, f1, k1]; vidP = vmapM[:, f2, k2]
-            x1 = xtemp[np.int32(vidM)]
-            y1 = ytemp[np.int32(vidM)]
-            x2 = xtemp[np.int32(vidP)]
-            y2 = ytemp[np.int32(vidP)]
+            vidM = vmapM[k1, f1, :]
+            vidP = vmapM[k2, f2, :]
+
+            x1 = xtemp[vidM]
+            y1 = ytemp[vidM]
+            x2 = xtemp[vidP]
+            y2 = ytemp[vidP]
             x1 = np.dot(x1, one);  y1 = np.dot(y1, one)
             x2 = np.dot(x2, one);  y2 = np.dot(y2, one)
+
             # Compute distance matrix
             D = (x1 -x2.T)**2 + (y1-y2.T)**2
-            # need to figure it out
-            idM, idP = np.nonzero(np.sqrt(abs(D))<NODETOL*refd)
-            vmapP[idM, f1, k1] = vidP[idP]
-            mapP[idM, f1, k1] = idP + f2*l.Nfp+k2*l.Nfaces*l.Nfp
+
+            ref_distance = np.sqrt(
+                    (VX[v1]-VX[v2])**2 + (VY[v1]-VY[v2])**2 )
+
+            idM, idP = np.nonzero(np.sqrt(abs(D))<NODETOL*ref_distance)
+            vmapP[k1, f1, idM] = vidP[idP]
+            #mapP[idM, f1, k1] = idP + f2*l.Nfp+k2*l.Nfaces*l.Nfp
+
+    from pudb import set_trace; set_trace()
 
     # reshape vmapM and vmapP to be vectors and create boundary node list
+    #mapP  = mapP.reshape(l.Nfp*l.Nfaces*K,1, order='F')
+    mapP = None
+    mapB  = np.array((vmapP.ravel()==vmapM.ravel()).nonzero()[0])
+    vmapB = vmapM.ravel()[mapB]
 
-    vmapP = vmapP.reshape(l.Nfp*l.Nfaces*K,1, order='F')
-    vmapM = vmapM.reshape(l.Nfp*l.Nfaces*K,1, order='F')
-    mapP  = mapP.reshape(l.Nfp*l.Nfaces*K,1, order='F')
-    mapB  = np.array((vmapP==vmapM).nonzero())[0,:]
-    mapB  = mapB.reshape(len(mapB),1)
-    vmapB = vmapM[mapB].reshape(len(mapB),1)
-    return np.int32(mapM), np.int32(mapP), np.int32(vmapM), np.int32(vmapP), np.int32(vmapB), np.int32(mapB)
-
-
-def ind2sub(matr, row_size):
-    """convert linear index to 2D index"""
-    I = np.int32(np.mod(matr, row_size))
-    J = np.int32((matr - I)/row_size)
-    return I, J
+    return mapM, mapP, vmapM, vmapP, vmapB, mapB
 
 
 
@@ -674,7 +662,8 @@ class LocalDiscretization2D:
 
     def gen_submesh_indices(self):
         """Return a list of tuples of indices into the node list that
-        generate a tesselation of the reference element."""
+        generate a tesselation of the reference element.
+        """
 
         node_tuples = [
                 (i,j)
@@ -724,6 +713,8 @@ class Discretization2D:
         self.rx, self.sx, self.ry, self.sy, self.J = GeometricFactors2D(x, y, l.Dr, l.Ds)
         self.nx, self.ny, sJ = Normals2D(l, x, y, K)
         self.Fscale = sJ/self.J[l.FmaskF,:]
+
+        # element-to-element, element-to-face connectivity
         self.EToE, self.EToF = Connect2D(EToV)
 
         self.mapM, self.mapP, self.vmapM, self.vmapP, self.vmapB, self.mapB = \
@@ -814,23 +805,19 @@ def MaxwellRHS2D(discr, Hx, Hy, Ez):
     l = discr.ldis
 
     # Define field differences at faces
-    vmapM = d.vmapM.reshape(l.Nfp*l.Nfaces, d.K, order='F')
-    vmapP = d.vmapP.reshape(l.Nfp*l.Nfaces, d.K, order='F')
-    Im, Jm = ind2sub(vmapM, l.Np)
-    Ip, Jp = ind2sub(vmapP, l.Np)
+    vmapM = d.vmapM.reshape(d.K, -1)
+    vmapP = d.vmapP.reshape(d.K, -1)
+    km, fim = divmod(vmapM.T, l.Np)
+    kp, fip = divmod(vmapP.T, l.Np)
 
-    flux_shape = (l.Nfp*l.Nfaces, d.K)
-    dHx = np.zeros(flux_shape)
-    dHx = Hx[Im, Jm]-Hx[Ip, Jp]
-    dHy = np.zeros(flux_shape)
-    dHy = Hy[Im, Jm]-Hy[Ip, Jp]
-    dEz = np.zeros(flux_shape)
-    dEz = Ez[Im, Jm]-Ez[Ip, Jp]
+    dHx = Hx[fim, km]-Hx[fip, kp]
+    dHy = Hy[fim, km]-Hy[fip, kp]
+    dEz = Ez[fim, km]-Ez[fip, kp]
 
     # Impose reflective boundary conditions (Ez+ = -Ez-)
     size_H = l.Nfp*l.Nfaces
-    I, J = ind2sub(d.mapB, size_H)
-    Iz, Jz = ind2sub(d.vmapB, l.Np)
+    J, I = divmod(d.mapB, size_H)
+    Jz, Iz = divmod(d.vmapB, l.Np)
 
     dHx[I, J] = 0
     dHy[I, J] = 0
