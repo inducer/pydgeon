@@ -24,6 +24,9 @@ from math import sqrt
 import numpy as np
 import numpy.linalg as la
 
+def eldot(mat, vec):
+    return np.tensordot(vec, mat, axes=(1,1))
+
 #do_vis = False
 do_vis = True
 if do_vis:
@@ -384,13 +387,13 @@ def GradSimplex2DP(a, b, id, jd):
     return dmodedr[:,0], dmodeds[:,0]
 
 
-def GradVandermonde2D(N, r, s):
+def GradVandermonde2D(N, Np, r, s):
     """Initialize the gradient of the modal basis
     (i, j) at (r, s) at order N.
     """
 
-    V2Dr = np.zeros((len(r),(N+1)*(N+2)/2))
-    V2Ds = np.zeros((len(r),(N+1)*(N+2)/2))
+    V2Dr = np.zeros((len(r), Np))
+    V2Ds = np.zeros((len(r), Np))
 
     # find tensor-product coordinates
     a, b = rstoab(r, s)
@@ -402,12 +405,12 @@ def GradVandermonde2D(N, r, s):
             sk = sk+1
     return V2Dr, V2Ds
 
-def Dmatrices2D(N, r, s, V):
+def Dmatrices2D(N, Np, r, s, V):
     """Initialize the (r, s) differentiation matriceon the simplex,
     evaluated at (r, s) at order N.
     """
 
-    Vr, Vs = GradVandermonde2D(N, r, s)
+    Vr, Vs = GradVandermonde2D(N, Np, r, s)
     invV   = la.inv(V)
     Dr     = np.dot(Vr, invV)
     Ds     = np.dot(Vs, invV)
@@ -446,10 +449,10 @@ def GeometricFactors2D(x, y, Dr, Ds):
     Returns [rx, sx, ry, sy, J].
     """
     # Calculate geometric factors
-    xr = np.dot(Dr, x.T).T
-    xs = np.dot(Ds, x.T).T
-    yr = np.dot(Dr, y.T).T
-    ys = np.dot(Ds, y.T).T
+    xr = eldot(Dr, x)
+    xs = eldot(Ds, x)
+    yr = eldot(Dr, y)
+    ys = eldot(Ds, y)
     J = -xs*yr + xr*ys
     rx = ys/J
     sx =-yr/J
@@ -463,10 +466,10 @@ def Normals2D(ldis, x, y, K):
     """
 
     l = ldis
-    xr = np.dot(l.Dr, x.T).T
-    yr = np.dot(l.Dr, y.T).T
-    xs = np.dot(l.Ds, x.T).T
-    ys = np.dot(l.Ds, y.T).T
+    xr = eldot(l.Dr, x)
+    yr = eldot(l.Dr, y)
+    xs = eldot(l.Ds, x)
+    ys = eldot(l.Ds, y)
     J = xr*ys-xs*yr
 
     # interpolate geometric factors to face nodes
@@ -655,12 +658,12 @@ class LocalDiscretization2D:
         V = self.V  = Vandermonde2D(N, r, s)
         invV = la.inv(self.V)
         MassMatrix = invV.T*invV
-        self.Dr, self.Ds = Dmatrices2D(N, r, s, self.V)
+        self.Dr, self.Ds = Dmatrices2D(N, self.Np, r, s, self.V)
 
         self.LIFT = Lift2D(self, r, s, V, Fmask)
 
         # weak operators
-        Vr, Vs = GradVandermonde2D(N, r, s)
+        Vr, Vs = GradVandermonde2D(N, self.Np, r, s)
         invVV = la.inv(np.dot(V, V.T))
         self.Drw = np.dot(np.dot(V, Vr.T), invVV);
         self.Dsw = np.dot(np.dot(V, Vs.T), invVV)
@@ -729,8 +732,8 @@ class Discretization2D:
         """Compute 2D gradient field of scalar u."""
         l = self.ldis
 
-        ur = np.dot(l.Dr, u.T).T
-        us = np.dot(l.Ds, u.T).T
+        ur = eldot(l.Dr, u)
+        us = eldot(l.Ds, u)
         ux = self.rx*ur + self.sx*us
         uy = self.ry*ur + self.sy*us
         return ux, uy
@@ -740,16 +743,16 @@ class Discretization2D:
         l = self.ldis
         d = self
 
-        uxr = np.dot(l.Dr, ux.T).T
-        uxs = np.dot(l.Ds, ux.T).T
-        uyr = np.dot(l.Dr, uy.T).T
-        uys = np.dot(l.Ds, uy.T).T
+        uxr = eldot(l.Dr, ux)
+        uxs = eldot(l.Ds, ux)
+        uyr = eldot(l.Dr, uy)
+        uys = eldot(l.Ds, uy)
         vz =  d.rx*uyr + d.sx*uys - d.ry*uxr - d.sy*uxs
         vx = 0; vy = 0
 
         if uz != 0:
-            uzr = np.dot(l.Dr, uz.T).T
-            uzs = np.dot(l.Ds, uz.T).T
+            uzr = eldot(l.Dr, uz)
+            uzs = eldot(l.Ds, uz)
             vx =  d.ry*uzr + d.sy*uzs
             vy = -d.rx*uzr - d.sx*uzs
 
@@ -822,12 +825,9 @@ def MaxwellRHS2D(discr, Hx, Hy, Ez):
     dEz = Ezr[vmapM]-Ezr[vmapP]
 
     # Impose reflective boundary conditions (Ez+ = -Ez-)
-    J, I = divmod(d.mapB, l.Nafp)
-    Jz, Iz = divmod(d.vmapB, l.Np)
-
-    dHx[J, I] = 0
-    dHy[J, I] = 0
-    dEz[J, I] = 2*Ez[Jz, Iz]
+    dHx.ravel()[d.mapB] = 0
+    dHy.ravel()[d.mapB] = 0
+    dEz.ravel()[d.mapB] = 2*Ezr[d.vmapB]
 
     # evaluate upwind fluxes
     alpha  = 1.0
@@ -841,9 +841,9 @@ def MaxwellRHS2D(discr, Hx, Hy, Ez):
     CuHx, CuHy, CuHz = d.curl(Hx, Hy,0)
 
     # compute right hand sides of the PDE's
-    rhsHx = -Ezy  + np.dot(l.LIFT, (d.Fscale*fluxHx).T).T/2.0
-    rhsHy =  Ezx  + np.dot(l.LIFT, (d.Fscale*fluxHy).T).T/2.0
-    rhsEz =  CuHz + np.dot(l.LIFT, (d.Fscale*fluxEz).T).T/2.0
+    rhsHx = -Ezy  + eldot(l.LIFT, (d.Fscale*fluxHx))/2.0
+    rhsHy =  Ezx  + eldot(l.LIFT, (d.Fscale*fluxHy))/2.0
+    rhsEz =  CuHz + eldot(l.LIFT, (d.Fscale*fluxEz))/2.0
     return rhsHx, rhsHy, rhsEz
 
 
@@ -904,8 +904,6 @@ def Maxwell2D(d, Hx, Hy, Ez, final_time):
 
     return Hx, Hy, Ez, time
 
-
-
 # }}}
 
 
@@ -914,7 +912,7 @@ def Maxwell2D(d, Hx, Hy, Ez, final_time):
 # {{{ test
 
 def test():
-    d = Discretization2D(LocalDiscretization2D(5),
+    d = Discretization2D(LocalDiscretization2D(order=5),
             *read_2d_gambit_mesh('Maxwell025.neu'))
 
     # set initial conditions
