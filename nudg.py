@@ -24,7 +24,7 @@ from math import sqrt
 import numpy as np
 import numpy.linalg as la
 
-do_vis = False
+#do_vis = False
 do_vis = True
 if do_vis:
     try:
@@ -446,9 +446,15 @@ def GeometricFactors2D(x, y, Dr, Ds):
     Returns [rx, sx, ry, sy, J].
     """
     # Calculate geometric factors
-    xr = np.dot(Dr, x); xs = np.dot(Ds, x)
-    yr = np.dot(Dr, y); ys = np.dot(Ds, y); J = -xs*yr + xr*ys
-    rx = ys/J; sx =-yr/J; ry =-xs/J; sy = xr/J
+    xr = np.dot(Dr, x.T).T
+    xs = np.dot(Ds, x.T).T
+    yr = np.dot(Dr, y.T).T
+    ys = np.dot(Ds, y.T).T
+    J = -xs*yr + xr*ys
+    rx = ys/J
+    sx =-yr/J
+    ry =-xs/J
+    sy = xr/J
     return rx, sx, ry, sy, J
 
 def Normals2D(ldis, x, y, K):
@@ -560,8 +566,7 @@ def BuildMaps2D(ldis, Fmask, VX, VY, EToV, EToE, EToF, K, N, x, y):
     l = ldis
 
     # number volume nodes consecutively
-    temp    = np.arange(K*l.Np)
-    nodeids = temp.reshape(l.Np, K, order='F').copy()
+    nodeids = np.arange(K*l.Np).reshape(l.Np, K, order='F')
 
     vmapM   = np.zeros((K, l.Nfaces, l.Nfp), dtype=np.intp)
     vmapP   = np.zeros((K, l.Nfaces, l.Nfp), dtype=np.intp)
@@ -608,8 +613,6 @@ def BuildMaps2D(ldis, Fmask, VX, VY, EToV, EToE, EToF, K, N, x, y):
             vmapP[k1, f1, idM] = vidP[idP]
             #mapP[idM, f1, k1] = idP + f2*l.Nfp+k2*l.Nfaces*l.Nfp
 
-    from pudb import set_trace; set_trace()
-
     # reshape vmapM and vmapP to be vectors and create boundary node list
     #mapP  = mapP.reshape(l.Nfp*l.Nfaces*K,1, order='F')
     mapP = None
@@ -631,6 +634,7 @@ class LocalDiscretization2D:
         self.N = N
         self.Nfp = N+1
         self.Nfaces = 3
+        self.Nafp = self.Nfp * self.Nfaces
 
         # compute nodal set
         x, y = self.x, self.y = Nodes2D(N)
@@ -697,35 +701,35 @@ class Discretization2D:
         self.VX   = VX
         self.K  = K
 
-        va = np.int32(EToV[:, 0].T)
-        vb = np.int32(EToV[:, 1].T)
-        vc = np.int32(EToV[:, 2].T)
+        va = np.intp(EToV[:, 0].T)
+        vb = np.intp(EToV[:, 1].T)
+        vc = np.intp(EToV[:, 2].T)
 
         x = self.x = 0.5*(
-                -np.outer(l.r+l.s, VX[va])
-                +np.outer(1+l.r, VX[vb])
-                +np.outer(1+l.s, VX[vc]))
+                -np.outer(VX[va], l.r+l.s, )
+                +np.outer(VX[vb], 1+l.r)
+                +np.outer(VX[vc], 1+l.s))
         y = self.y = 0.5*(
-                -np.outer(l.r+l.s, VY[va])
-                +np.outer(1+l.r, VY[vb])
-                +np.outer(1+l.s, VY[vc]))
+                -np.outer(VY[va], l.r+l.s)
+                +np.outer(VY[vb], 1+l.r)
+                +np.outer(VY[vc], 1+l.s))
 
         self.rx, self.sx, self.ry, self.sy, self.J = GeometricFactors2D(x, y, l.Dr, l.Ds)
-        self.nx, self.ny, sJ = Normals2D(l, x, y, K)
-        self.Fscale = sJ/self.J[l.FmaskF,:]
+        self.nx, self.ny, sJ = Normals2D(l, x.T, y.T, K)
+        self.Fscale = sJ/self.J[:, l.FmaskF].T
 
         # element-to-element, element-to-face connectivity
         self.EToE, self.EToF = Connect2D(EToV)
 
         self.mapM, self.mapP, self.vmapM, self.vmapP, self.vmapB, self.mapB = \
-                BuildMaps2D(l, l.Fmask, VX, VY, EToV, self.EToE, self.EToF, K, l.N, x, y)
+                BuildMaps2D(l, l.Fmask, VX, VY, EToV, self.EToE, self.EToF, K, l.N, x.T, y.T)
 
     def grad(self, u):
         """Compute 2D gradient field of scalar u."""
         l = self.ldis
 
-        ur = np.dot(l.Dr, u)
-        us = np.dot(l.Ds, u)
+        ur = np.dot(l.Dr, u.T).T
+        us = np.dot(l.Ds, u.T).T
         ux = self.rx*ur + self.sx*us
         uy = self.ry*ur + self.sy*us
         return ux, uy
@@ -735,16 +739,16 @@ class Discretization2D:
         l = self.ldis
         d = self
 
-        uxr = np.dot(l.Dr, ux)
-        uxs = np.dot(l.Ds, ux)
-        uyr = np.dot(l.Dr, uy)
-        uys = np.dot(l.Ds, uy)
+        uxr = np.dot(l.Dr, ux.T).T
+        uxs = np.dot(l.Ds, ux.T).T
+        uyr = np.dot(l.Dr, uy.T).T
+        uys = np.dot(l.Ds, uy.T).T
         vz =  d.rx*uyr + d.sx*uys - d.ry*uxr - d.sy*uxs
         vx = 0; vy = 0
 
         if uz != 0:
-            uzr = np.dot(l.Dr, uz)
-            uzs = np.dot(l.Ds, uz)
+            uzr = np.dot(l.Dr, uz.T).T
+            uzs = np.dot(l.Ds, uz.T).T
             vx =  d.ry*uzr + d.sy*uzs
             vy = -d.rx*uzr - d.sx*uzs
 
@@ -766,15 +770,15 @@ class Discretization2D:
         vmask    = vmask.T
         vmaskF   = vmask.reshape(vmask.shape[0]*vmask.shape[1], order='F')
 
-        vx = self.x[vmaskF[:], :]; vy = self.y[vmaskF[:], :]
+        vx = self.x[:, vmaskF[:]]; vy = self.y[:, vmaskF[:]]
 
         # Compute semi-perimeter and area
-        len1 = np.sqrt((vx[0,:]-vx[1,:])**2\
-                +(vy[0,:]-vy[1,:])**2)
-        len2 = np.sqrt((vx[1,:]-vx[2,:])**2\
-                +(vy[1,:]-vy[2,:])**2)
-        len3 = np.sqrt((vx[2,:]-vx[0,:])**2\
-                +(vy[2,:]-vy[0,:])**2)
+        len1 = np.sqrt((vx[:,0]-vx[:,1])**2\
+                +(vy[:,0]-vy[:,1])**2)
+        len2 = np.sqrt((vx[:,1]-vx[:,2])**2\
+                +(vy[:,1]-vy[:,2])**2)
+        len3 = np.sqrt((vx[:,2]-vx[:,0])**2\
+                +(vy[:,2]-vy[:,0])**2)
         sper = (len1 + len2 + len3)/2.0
         area = np.sqrt(sper*(sper-len1)*(sper-len2)*(sper-len3))
 
@@ -807,21 +811,22 @@ def MaxwellRHS2D(discr, Hx, Hy, Ez):
     # Define field differences at faces
     vmapM = d.vmapM.reshape(d.K, -1)
     vmapP = d.vmapP.reshape(d.K, -1)
-    km, fim = divmod(vmapM.T, l.Np)
-    kp, fip = divmod(vmapP.T, l.Np)
 
-    dHx = Hx[fim, km]-Hx[fip, kp]
-    dHy = Hy[fim, km]-Hy[fip, kp]
-    dEz = Ez[fim, km]-Ez[fip, kp]
+    Hxr = Hx.ravel()
+    Hyr = Hy.ravel()
+    Ezr = Ez.ravel()
+
+    dHx = (Hxr[vmapM]-Hxr[vmapP]).T
+    dHy = (Hyr[vmapM]-Hyr[vmapP]).T
+    dEz = (Ezr[vmapM]-Ezr[vmapP]).T
 
     # Impose reflective boundary conditions (Ez+ = -Ez-)
-    size_H = l.Nfp*l.Nfaces
-    J, I = divmod(d.mapB, size_H)
+    J, I = divmod(d.mapB, l.Nafp)
     Jz, Iz = divmod(d.vmapB, l.Np)
 
     dHx[I, J] = 0
     dHy[I, J] = 0
-    dEz[I, J] = 2*Ez[Iz, Jz]
+    dEz[I, J] = 2*Ez[Jz, Iz].T
 
     # evaluate upwind fluxes
     alpha  = 1.0
@@ -835,9 +840,9 @@ def MaxwellRHS2D(discr, Hx, Hy, Ez):
     CuHx, CuHy, CuHz = d.curl(Hx, Hy,0)
 
     # compute right hand sides of the PDE's
-    rhsHx = -Ezy  + np.dot(l.LIFT, d.Fscale*fluxHx)/2.0
-    rhsHy =  Ezx  + np.dot(l.LIFT, d.Fscale*fluxHy)/2.0
-    rhsEz =  CuHz + np.dot(l.LIFT, d.Fscale*fluxEz)/2.0
+    rhsHx = -Ezy  + np.dot(l.LIFT, d.Fscale*fluxHx).T/2.0
+    rhsHy =  Ezx  + np.dot(l.LIFT, d.Fscale*fluxHy).T/2.0
+    rhsEz =  CuHz + np.dot(l.LIFT, d.Fscale*fluxEz).T/2.0
     return rhsHx, rhsHy, rhsEz
 
 
@@ -865,7 +870,7 @@ def Maxwell2D(d, Hx, Hy, Ez, final_time):
 
     if do_vis:
         vis_mesh = mayavi.triangular_mesh(
-                d.x.T.flatten(), d.y.T.flatten(), Ez.T.flatten(),
+                d.x.ravel(), d.y.ravel(), Ez.ravel(),
                 d.gen_vis_triangles())
 
     # outer time step loop
@@ -892,7 +897,7 @@ def Maxwell2D(d, Hx, Hy, Ez, final_time):
         time = time+dt
 
         if do_vis:
-            vis_mesh.mlab_source.z = Ez.T.flatten()
+            vis_mesh.mlab_source.z = Ez.ravel()
 
         print la.norm(Ez)
 
@@ -912,10 +917,11 @@ def test():
             *read_2d_gambit_mesh('Maxwell025.neu'))
 
     # set initial conditions
-    mmode = 1; nmode = 1
+    #mmode = 1.3; nmode = 1.2
+    mmode = 3; nmode = 2
     Ez = np.sin(mmode*np.pi*d.x)*np.sin(nmode*np.pi*d.y)
-    Hx = np.zeros((d.ldis.Np, d.K))
-    Hy = np.zeros((d.ldis.Np, d.K))
+    Hx = np.zeros((d.K, d.ldis.Np))
+    Hy = np.zeros((d.K, d.ldis.Np))
 
     Hx, Hy, Ez, time = Maxwell2D(d, Hx, Hy, Ez, final_time=5)
 
