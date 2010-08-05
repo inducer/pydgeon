@@ -18,7 +18,6 @@
 
 from __future__ import division
 
-import pyopencl as cl
 import numpy as np
 
 
@@ -29,22 +28,23 @@ import numpy as np
 def MaxwellRHS2D(discr, Hx, Hy, Ez):
     """Evaluate RHS flux in 2D Maxwell TM form."""
 
-    from pydgeon import eldot
+    from pydgeon.tools import eldot
 
     d = discr
     l = discr.ldis
 
     # Define field differences at faces
+    vmapM = d.vmapM.reshape(d.K, -1)
     vmapP = d.vmapP.reshape(d.K, -1)
 
-    dHx = Hx.reshape(d.K, -1)[:, l.FmaskF]-Hx.flat[vmapP]
-    dHy = Hy.reshape(d.K, -1)[:, l.FmaskF]-Hy.flat[vmapP]
-    dEz = Ez.reshape(d.K, -1)[:, l.FmaskF]-Ez.flat[vmapP]
+    dHx = Hx.flat[vmapM]-Hx.flat[vmapP]
+    dHy = Hy.flat[vmapM]-Hy.flat[vmapP]
+    dEz = Ez.flat[vmapM]-Ez.flat[vmapP]
 
     # Impose reflective boundary conditions (Ez+ = -Ez-)
-    dHx.ravel()[d.mapB] = 0
-    dHy.ravel()[d.mapB] = 0
-    dEz.ravel()[d.mapB] = 2*Ez.flat[d.vmapB]
+    dHx.flat[d.mapB] = 0
+    dHy.flat[d.mapB] = 0
+    dEz.flat[d.mapB] = 2*Ez.flat[d.vmapB]
 
     # evaluate upwind fluxes
     alpha  = 1.0
@@ -236,6 +236,8 @@ __kernel void MaxwellsSurface2d(int K,
 
 class CLMaxwellsRhs2D:
     def __init__(self, discr):
+        import pyopencl as cl
+
         self.discr = discr
 
         self.volume_kernel = cl.Program(discr.ctx,
@@ -289,7 +291,3 @@ class CLMaxwellsRhs2D:
 # }}}
 
 # vim: foldmethod=marker
-
-
-
-
