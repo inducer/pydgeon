@@ -1,4 +1,4 @@
-# PyNudg - the python Nodal DG Environment
+# Pydgeon - the Python DG Environment
 # (C) 2009, 2010 Tim Warburton, Xueyu Zhu, Andreas Kloeckner
 #
 # This program is free software: you can redistribute it and/or modify
@@ -24,17 +24,6 @@ from math import sqrt
 import numpy as np
 import numpy.linalg as la
 
-def eldot(mat, vec):
-    return np.tensordot(vec, mat, axes=(1,1))
-
-#do_vis = False
-do_vis = True
-if do_vis:
-    try:
-        import enthought.mayavi.mlab as mayavi
-    except ImportError:
-        do_vis = False
-
 
 NODETOL = 1e-12
 eps = np.finfo(float).eps
@@ -43,6 +32,7 @@ eps = np.finfo(float).eps
 
 
 # {{{ Low-storage Runge-Kutta coefficients
+
 rk4a = np.array([0 ,
         -567301805773/1357537059087,
         -2404267990393/2016746695238,
@@ -61,8 +51,17 @@ rk4c = [0,
 
 # }}}
 
+# {{{ odds and ends
 
+def eldot(mat, vec):
+    return np.tensordot(vec, mat, axes=(1,1))
 
+def make_obj_array(res_list):
+    result = np.empty((len(res_list),), dtype=object)
+    for i, v in enumerate(res_list):
+        result[i] = v
+
+    return result
 
 def fact(z):
     g = 1
@@ -70,6 +69,10 @@ def fact(z):
         g = g*i
 
     return g
+
+# }}}
+
+# {{{ mesh reading
 
 def read_2d_gambit_mesh(file_name):
     """Read in basic grid information to build grid
@@ -109,6 +112,8 @@ def read_2d_gambit_mesh(file_name):
             EToV[k,2] = np.int32(tmpcon[5])-1
 
         return Nv, VX, VY, K, EToV
+
+# }}}
 
 
 def JacobiP(x, alpha, beta, N):
@@ -198,7 +203,7 @@ def JacobiGQ(alpha, beta, N):
 
     return x, w
 
-def  JacobiGL(alpha, beta, N):
+def JacobiGL(alpha, beta, N):
     """Compute the Nth order Gauss Lobatto quadrature points, x,
     associated with the Jacobi polynomial, of type (alpha, beta) > -1 ( <> -0.5).
     """
@@ -423,22 +428,22 @@ def Lift2D(ldis, r, s, V, Fmask):
     Emat = np.zeros((l.Np, l.Nfaces*l.Nfp))
 
     # face 1
-    faceR = r[Fmask[:,0]]
+    faceR = r[Fmask[0,:]]
     V1D = Vandermonde1D(l.N, faceR)
     massEdge1 = la.inv(np.dot(V1D, V1D.T))
-    Emat[Fmask[:,0],0:l.Nfp] = massEdge1
+    Emat[Fmask[0,:],0:l.Nfp] = massEdge1
 
     # face 2
-    faceR = r[Fmask[:,1]]
+    faceR = r[Fmask[1,:]]
     V1D = Vandermonde1D(l.N, faceR)
     massEdge2 = la.inv(np.dot(V1D, V1D.T))
-    Emat[Fmask[:,1], l.Nfp:2*l.Nfp] = massEdge2
+    Emat[Fmask[1,:], l.Nfp:2*l.Nfp] = massEdge2
 
     # face 3
-    faceS = s[Fmask[:,2]]
+    faceS = s[Fmask[2,:]]
     V1D = Vandermonde1D(l.N, faceS)
     massEdge3 = la.inv(np.dot(V1D, V1D.T))
-    Emat[Fmask[:,2],2*l.Nfp:3*l.Nfp] = massEdge3
+    Emat[Fmask[2,:],2*l.Nfp:3*l.Nfp] = massEdge3
 
     # inv(mass matrix)*\I_n (L_i, L_j)_{edge_n}
     LIFT = np.dot(V, np.dot(V.T, Emat))
@@ -570,20 +575,16 @@ def BuildMaps2D(ldis, Fmask, VX, VY, EToV, EToE, EToF, K, N, x, y):
     l = ldis
 
     # number volume nodes consecutively
-    nodeids = np.arange(K*l.Np).reshape(l.Np, K, order='F')
+    nodeids = np.arange(K*l.Np).reshape(K, l.Np)
 
-    vmapM   = np.zeros((K, l.Nfaces, l.Nfp), dtype=np.intp)
-    vmapP   = np.zeros((K, l.Nfaces, l.Nfp), dtype=np.intp)
-    mapM    = np.arange(np.int32(K)*l.Nfp*l.Nfaces, dtype=np.intp)
-    #mapP    = mapM.reshape(l.Nfp, l.Nfaces, K).copy()
+    vmapM = nodeids[:, Fmask]
+    vmapP = np.zeros((K, l.Nfaces, l.Nfp), dtype=np.intp)
+    mapP = np.empty((K, l.Nfaces, l.Nfp), dtype=np.intp)
+    mapM = np.arange(mapP.size, dtype=np.intp).reshape(mapP.shape)
 
     # find index of face nodes with respect to volume node ordering
-    for k1 in range(K):
-        for f1 in range(l.Nfaces):
-            vmapM[k1, f1, :] = nodeids[Fmask[:, f1], k1]
-
-    xtemp = x.reshape(K*l.Np,1, order='F').copy()
-    ytemp = y.reshape(K*l.Np,1, order='F').copy()
+    xtemp = x.reshape(K*l.Np, 1)
+    ytemp = y.reshape(K*l.Np, 1)
 
     one = np.ones((1, l.Nfp))
     for k1 in range(K):
@@ -608,18 +609,16 @@ def BuildMaps2D(ldis, Fmask, VX, VY, EToV, EToE, EToF, K, N, x, y):
             x2 = np.dot(x2, one);  y2 = np.dot(y2, one)
 
             # Compute distance matrix
-            D = (x1 -x2.T)**2 + (y1-y2.T)**2
+            D = (x1-x2.T)**2 + (y1-y2.T)**2
 
             ref_distance = np.sqrt(
                     (VX[v1]-VX[v2])**2 + (VY[v1]-VY[v2])**2 )
 
             idM, idP = np.nonzero(np.sqrt(abs(D))<NODETOL*ref_distance)
             vmapP[k1, f1, idM] = vidP[idP]
-            #mapP[idM, f1, k1] = idP + f2*l.Nfp+k2*l.Nfaces*l.Nfp
+            mapP[k1, f1, idM] = idP + f2*l.Nfp+k2*l.Nfaces*l.Nfp
 
-    # reshape vmapM and vmapP to be vectors and create boundary node list
-    #mapP  = mapP.reshape(l.Nfp*l.Nfaces*K,1, order='F')
-    mapP = None
+    # create boundary node list
     mapB  = np.array((vmapP.ravel()==vmapM.ravel()).nonzero()[0])
     vmapB = vmapM.ravel()[mapB]
 
@@ -648,8 +647,8 @@ class LocalDiscretization2D:
         fmask1   = (np.abs(s+1) < NODETOL).nonzero()[0];
         fmask2   = (np.abs(r+s) < NODETOL).nonzero()[0]
         fmask3   = (np.abs(r+1) < NODETOL).nonzero()[0]
-        Fmask = self.Fmask = np.vstack((fmask1, fmask2, fmask3)).T
-        FmaskF = self.FmaskF = Fmask.T.flatten()
+        Fmask = self.Fmask = np.vstack((fmask1, fmask2, fmask3))
+        FmaskF = self.FmaskF = Fmask.flatten()
 
         self.Fx = x[FmaskF[:], :]
         self.Fy = y[FmaskF[:], :]
@@ -726,7 +725,7 @@ class Discretization2D:
         self.EToE, self.EToF = Connect2D(EToV)
 
         self.mapM, self.mapP, self.vmapM, self.vmapP, self.vmapB, self.mapB = \
-                BuildMaps2D(l, l.Fmask, VX, VY, EToV, self.EToE, self.EToF, K, l.N, x.T, y.T)
+                BuildMaps2D(l, l.Fmask, VX, VY, EToV, self.EToE, self.EToF, K, l.N, x, y)
 
     def grad(self, u):
         """Compute 2D gradient field of scalar u."""
@@ -813,21 +812,16 @@ def MaxwellRHS2D(discr, Hx, Hy, Ez):
     l = discr.ldis
 
     # Define field differences at faces
-    vmapM = d.vmapM.reshape(d.K, -1)
     vmapP = d.vmapP.reshape(d.K, -1)
 
-    Hxr = Hx.ravel()
-    Hyr = Hy.ravel()
-    Ezr = Ez.ravel()
-
-    dHx = Hxr[vmapM]-Hxr[vmapP]
-    dHy = Hyr[vmapM]-Hyr[vmapP]
-    dEz = Ezr[vmapM]-Ezr[vmapP]
+    dHx = Hx.reshape(d.K, -1)[:, l.FmaskF]-Hx.flat[vmapP]
+    dHy = Hy.reshape(d.K, -1)[:, l.FmaskF]-Hy.flat[vmapP]
+    dEz = Ez.reshape(d.K, -1)[:, l.FmaskF]-Ez.flat[vmapP]
 
     # Impose reflective boundary conditions (Ez+ = -Ez-)
     dHx.ravel()[d.mapB] = 0
     dHy.ravel()[d.mapB] = 0
-    dEz.ravel()[d.mapB] = 2*Ezr[d.vmapB]
+    dEz.ravel()[d.mapB] = 2*Ez.flat[d.vmapB]
 
     # evaluate upwind fluxes
     alpha  = 1.0
@@ -849,60 +843,30 @@ def MaxwellRHS2D(discr, Hx, Hy, Ez):
 
 
 
-def Maxwell2D(d, Hx, Hy, Ez, final_time):
-    """Integrate TM-mode Maxwell's until final_time starting
-    with initial conditions Hx, Hy, Ez.
-    """
-
-    l = d.ldis
-
+def runge_kutta(state, rhs_func, dt, final_time, vis_hook=None):
     time = 0
+    step = 0
 
-    # Runge-Kutta residual storage
-    resHx = np.zeros_like(Hx)
-    resHy = np.zeros_like(Hx)
-    resEz = np.zeros_like(Hx)
-
-    # compute time step size
-    rLGL = JacobiGQ(0,0, l.N)[0]
-    rmin = abs(rLGL[0]-rLGL[1])
-    dt_scale = d.dt_scale()
-    dt = dt_scale.min()*rmin*2/3
-
-    if do_vis:
-        vis_mesh = mayavi.triangular_mesh(
-                d.x.ravel(), d.y.ravel(), Ez.ravel(),
-                d.gen_vis_triangles())
+    residual = 0*state
 
     # outer time step loop
     while time < final_time:
-
         if time+dt>final_time:
             dt = final_time-time
 
         for a, b in zip(rk4a, rk4b):
-            # compute right hand side of TM-mode Maxwell's equations
-            rhsHx, rhsHy, rhsEz = MaxwellRHS2D(d, Hx, Hy, Ez)
+            rhs = rhs_func(time, state)
+            residual = a*residual + dt*rhs
+            state = state + b*residual
 
-            # initiate and increment Runge-Kutta residuals
-            resHx = a*resHx + dt*rhsHx
-            resHy = a*resHy + dt*rhsHy
-            resEz = a*resEz + dt*rhsEz
-
-            # update fields
-            Hx = Hx+b*resHx
-            Hy = Hy+b*resHy
-            Ez = Ez+b*resEz
+        if vis_hook is not None:
+            vis_hook(step, time, state)
 
         # Increment time
         time = time+dt
+        step += 1
 
-        if do_vis:
-            vis_mesh.mlab_source.z = Ez.ravel()
-
-        print la.norm(Ez)
-
-    return Hx, Hy, Ez, time
+    return time, state
 
 # }}}
 
@@ -912,17 +876,52 @@ def Maxwell2D(d, Hx, Hy, Ez, final_time):
 # {{{ test
 
 def test():
-    d = Discretization2D(LocalDiscretization2D(order=5),
+    d = Discretization2D(LocalDiscretization2D(N=9),
             *read_2d_gambit_mesh('Maxwell025.neu'))
 
     # set initial conditions
     #mmode = 1.3; nmode = 1.2
     mmode = 3; nmode = 2
-    Ez = np.sin(mmode*np.pi*d.x)*np.sin(nmode*np.pi*d.y)
     Hx = np.zeros((d.K, d.ldis.Np))
     Hy = np.zeros((d.K, d.ldis.Np))
+    Ez = np.sin(mmode*np.pi*d.x)*np.sin(nmode*np.pi*d.y)
 
-    Hx, Hy, Ez, time = Maxwell2D(d, Hx, Hy, Ez, final_time=5)
+    state = make_obj_array([Hx, Hy, Ez])
+
+    # compute time step size
+    rLGL = JacobiGQ(0,0, d.ldis.N)[0]
+    rmin = abs(rLGL[0]-rLGL[1])
+    dt_scale = d.dt_scale()
+    dt = dt_scale.min()*rmin*2/3
+
+    do_vis = False
+    #do_vis = True
+    if do_vis:
+        try:
+            import enthought.mayavi.mlab as mayavi
+        except ImportError:
+            do_vis = False
+
+    if do_vis:
+        vis_mesh = mayavi.triangular_mesh(
+                d.x.ravel(), d.y.ravel(), Ez.ravel(),
+                d.gen_vis_triangles())
+
+    def vis_hook(step, t, state):
+        Hx, Hy, Ez = state
+
+        if step % 10 == 0 and do_vis:
+            vis_mesh.mlab_source.z = Ez.ravel()
+
+        print la.norm(Ez)
+
+
+
+    def rhs(t, state):
+        return make_obj_array(MaxwellRHS2D(d, *state))
+
+    time, final_state = runge_kutta(state, rhs, dt, final_time=5,
+            vis_hook=vis_hook)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-# PyNudg - the python Nodal DG Environment
+# Pydgeon - the Python DG Environment
 # (C) 2010 Tim Warburton, Andreas Kloeckner
 #
 # This program is free software: you can redistribute it and/or modify
@@ -50,43 +50,51 @@ class CLDiscretization2D(Discretization2D):
 
         # geometric coefficients
         drdx_dev = np.empty((self.K, self.dimensions**2), dtype=np.float32)
-        drdx_dev[:,0] = self.rx[0]
-        drdx_dev[:,1] = self.ry[0]
-        drdx_dev[:,2] = self.sx[0]
-        drdx_dev[:,3] = self.sy[0]
+        drdx_dev[:,0] = self.rx[:, 0]
+        drdx_dev[:,1] = self.ry[:, 0]
+        drdx_dev[:,2] = self.sx[:, 0]
+        drdx_dev[:,3] = self.sy[:, 0]
         self.drdx_dev = cl_array.to_device(self.ctx, self.queue, drdx_dev)
 
         # lift matrix
         lift_dev = np.empty((ldis.Nfp, ldis.Np, 4), dtype=np.float32)
-        partitioned_lift = ldis.LIFT.reshape(ldis.Np, ldis.Nfaces, -1)
-        assert partitioned_lift.shape[-1] == ldis.Nfp
+        partitioned_lift = ldis.LIFT.reshape(ldis.Np, -1, ldis.Nfaces)
 
         for i in range(ldis.Nfaces):
-            lift_dev[:, :, i] = partitioned_lift[:, i, :].T
+            lift_dev[:, :, i] = partitioned_lift[:, :, i].T
         self.lift_dev = cl_array.to_device(self.ctx, self.queue, lift_dev)
 
         # surface info
-        surfinfo_dev = np.empty((self.K, ldis.Nfaces, ldis.Nfp, 6), dtype=np.float32)
-        el_p, face_i_p = divmod(self.vmapP, ldis.Np)
-        print el_p.shape
-        surfinfo_dev[:, 0] = el_p * self.block_size + face_i_p
-        el_m, face_i_m = divmod(self.vmapM, ldis.Np)
-        surfinfo_dev[:, 1] = el_m * self.block_size + face_i_m
+        surfinfo_dev = np.empty((self.K, 6, ldis.Nafp), dtype=np.float32)
+
+        el_p, face_i_p = divmod(self.vmapP.reshape(-1, ldis.Nafp), ldis.Np)
+        el_m, face_i_m = divmod(self.vmapM.reshape(-1, ldis.Nafp), ldis.Np)
+
+        ind_p = el_p * self.block_size + face_i_p
+        ind_m = el_m * self.block_size + face_i_m
+
+        surfinfo_dev[:, 0, :] = ind_m
+        surfinfo_dev[:, 1, :] = ind_p
+        surfinfo_dev[:, 2, :] = self.Fscale
+        surfinfo_dev[:, 3, :] = np.where(ind_m==ind_p, -1, 1)
+        surfinfo_dev[:, 4, :] = self.nx
+        surfinfo_dev[:, 5, :] = self.ny
+
+        self.surfinfo_dev = cl_array.to_device(self.ctx, self.queue, surfinfo_dev)
 
     def to_dev(self, vec):
-        dev_vec = np.empty(dtype=np.float32, order="F",
-                shape=(self.block_size, self.K))
-        dev_vec[:self.ldis.Np, :] = vec
+        dev_vec = np.empty((self.K, self.block_size), dtype=np.float32)
+        dev_vec[:, :self.ldis.Np] = vec
         return cl_array.to_device(self.ctx, self.queue, dev_vec)
 
     def from_dev(self, vec):
-        return vec.get()[:self.ldis.Np, :]
+        return vec.get()[:, :self.ldis.Np]
 
     def volume_empty(self):
         return cl_array.Array(
                 self.ctx, queue=self.queue,
-                shape=(self.block_size, self.K),
-                dtype=np.float32, order="F")
+                shape=(self.K, self.block_size),
+                dtype=np.float32)
 
 
 
@@ -175,9 +183,9 @@ __kernel void MaxwellsSurface2d(int K,
   const int n = get_local_id(0);
   const int k = get_group_id(0);
 
-  __local l_fluxHx[p_Nafp];
-  __local l_fluxHy[p_Nafp];
-  __local l_fluxEz[p_Nafp];
+  __local float l_fluxHx[p_Nafp];
+  __local float l_fluxHy[p_Nafp];
+  __local float l_fluxEz[p_Nafp];
 
   int m;
 
@@ -198,9 +206,9 @@ __kernel void MaxwellsSurface2d(int K,
     float dHx=0, dHy=0, dEz=0;
     if (idP>=0)
     {
-      dHx = Fsc*(    g_Hx[idP] - g_Hx[idM]);
-      dHy = Fsc*(    g_Hy[idP] - g_Hy[idM]);
-      dEz = Fsc*(Bsc*g_Ez[idP] - g_Ez[idM]);
+      dHx = 0.5f*Fsc*(    g_Hx[idP] - g_Hx[idM]);
+      dHy = 0.5f*Fsc*(    g_Hy[idP] - g_Hy[idM]);
+      dEz = 0.5f*Fsc*(Bsc*g_Ez[idP] - g_Ez[idM]);
     }
 
     const float ndotdH = nx*dHx + ny*dHy;
@@ -296,22 +304,6 @@ class CLMaxwellsRhs2D:
                 ).build().MaxwellsSurface2d
         self.surface_kernel.set_scalar_arg_dtypes([np.int32] + 8*[None])
 
-    def local(self, Hx, Hy, Ez):
-        d = self.discr
-
-        rhsHx = d.volume_empty()
-        rhsHy = d.volume_empty()
-        rhsEz = d.volume_empty()
-
-        self.volume_kernel(d.queue, 
-                (d.K*d.block_size,), (d.block_size,),
-                d.K,
-                Hx.data, Hy.data, Ez.data,
-                rhsHx.data, rhsHy.data, rhsEz.data,
-                d.diffmatrices_dev.data, d.drdx_dev.data)
-
-        return rhsHx, rhsHy, rhsEz
-
     def __call__(self, Hx, Hy, Ez):
         d = self.discr
         ldis = d.ldis
@@ -333,9 +325,10 @@ class CLMaxwellsRhs2D:
 
         self.surface_kernel(d.queue, 
                 (d.K*surf_block_size,), (surf_block_size,),
+                d.K,
                 Hx.data, Hy.data, Ez.data,
                 rhsHx.data, rhsHy.data, rhsEz.data,
-                d.surfinfo.data, d.lift_dev.data)
+                d.surfinfo_dev.data, d.lift_dev.data)
 
         return rhsHx, rhsHy, rhsEz
 
@@ -345,29 +338,60 @@ class CLMaxwellsRhs2D:
 # {{{ test
 
 def test():
-    from nudg import read_2d_gambit_mesh
-    from nudg import LocalDiscretization2D
-    d = CLDiscretization2D(LocalDiscretization2D(5),
+    from nudg import (LocalDiscretization2D,
+            read_2d_gambit_mesh, 
+            make_obj_array, JacobiGQ, runge_kutta)
+    d = CLDiscretization2D(LocalDiscretization2D(N=9),
             *read_2d_gambit_mesh('Maxwell025.neu'))
 
+    dev_max = CLMaxwellsRhs2D(d)
+
     # set initial conditions
-    mmode = 1; nmode = 1
+    #mmode = 1.3; nmode = 1.2
+    mmode = 3; nmode = 2
+    Hx = np.zeros((d.K, d.ldis.Np))
+    Hy = np.zeros((d.K, d.ldis.Np))
     Ez = np.sin(mmode*np.pi*d.x)*np.sin(nmode*np.pi*d.y)
-    Hx = np.zeros((d.ldis.Np, d.K))
-    Hy = np.zeros((d.ldis.Np, d.K))
 
     Ez_dev = d.to_dev(Ez.astype(np.float32))
     Hx_dev = d.to_dev(Hx.astype(np.float32))
     Hy_dev = d.to_dev(Hy.astype(np.float32))
 
-    dev_max = CLMaxwellsRhs2D(d)
-    rhsHx_dev, rhsHy_dev, rhsEz_dev = dev_max.local(Ez_dev, Hx_dev, Hy_dev)
-    rhsHx, rhsHy, rhsEz = MaxwellLocalRef(d, Ez, Hx, Hy)
+    state = make_obj_array([Hx_dev, Hy_dev, Ez_dev])
 
-    rhsEz2 = d.from_dev(rhsEz_dev)
+    # compute time step size
+    rLGL = JacobiGQ(0,0, d.ldis.N)[0]
+    rmin = abs(rLGL[0]-rLGL[1])
+    dt_scale = d.dt_scale()
+    dt = dt_scale.min()*rmin*2/3
 
-    print la.norm(rhsEz2 - rhsEz)/la.norm(rhsEz)
-    #Hx, Hy, Ez, time = Maxwell2D(d, Hx, Hy, Ez, final_time=5)
+    do_vis = False
+    do_vis = True
+    if do_vis:
+        try:
+            import enthought.mayavi.mlab as mayavi
+        except ImportError:
+            do_vis = False
+
+    if do_vis:
+        vis_mesh = mayavi.triangular_mesh(
+                d.x.ravel(), d.y.ravel(), Ez.ravel(),
+                d.gen_vis_triangles())
+
+    def vis_hook(step, t, state):
+        Hx, Hy, Ez = state
+        if step % 10 == 0 and do_vis:
+            Ez = d.from_dev(Ez)
+
+            vis_mesh.mlab_source.z = Ez.ravel()
+            print la.norm(Ez)
+
+    def rhs(t, state):
+        return make_obj_array(dev_max(*state))
+
+    time, final_state = runge_kutta(state, rhs, dt, final_time=5,
+            vis_hook=vis_hook)
+
 
 if __name__ == "__main__":
     test()
