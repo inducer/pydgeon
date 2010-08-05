@@ -19,7 +19,6 @@
 from __future__ import division
 
 import numpy as np
-import numpy.linalg as la
 
 import pydgeon
 from pydgeon.local import LocalDiscretization2D, JacobiGQ
@@ -40,6 +39,9 @@ def main():
     parser.add_option("-i", "--ic", metavar="NAME",
             help="use initial condition NAME (try 'help')",
             default="gaussian")
+    parser.add_option("-t", "--final-time", metavar="T",
+            help="set final time", type="float",
+            default=5)
     parser.add_option("-n", metavar="N", type="int", default=4,
             help="use polynomial degree N")
 
@@ -147,8 +149,8 @@ def main():
 
     # time loop
     start_time = [0]
-    time, final_state = integrate_in_time(state, rhs, dt, final_time=5,
-            vis_hook=vis_hook)
+    time, final_state = integrate_in_time(state, rhs, dt, 
+            final_time=options.final_time, vis_hook=vis_hook)
 
 
 

@@ -93,9 +93,7 @@ def JacobiGQ(alpha, beta, N):
     """
 
     if N==0:
-        x[0]=(alpha-beta)/(alpha+beta+2)
-        w[0] = 2
-        return x, w
+        return np.array([(alpha-beta)/(alpha+beta+2)]), np.array([2])
 
     # Form symmetric matrix from recurrence.
     J    = np.zeros(N+1)
