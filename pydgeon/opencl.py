@@ -33,35 +33,6 @@ CL_OPTIONS = ("-cl-mad-enable -cl-fast-relaxed-math "
 
 
 
-def test_image(context, queue, mat, img):
-        prg = cl.Program(context, """
-            __kernel void copy_image(
-              __global float2 *dest,
-              __read_only image2d_t src,
-              int width)
-            {
-              int x = get_global_id(0);
-              int y = get_global_id(1);
-              const sampler_t samp =
-                CLK_NORMALIZED_COORDS_FALSE
-                | CLK_ADDRESS_CLAMP
-                | CLK_FILTER_NEAREST;
-              dest[x + width*y] = read_imagef(src, samp, (float2)(x, y)).xy;
-            }
-            """).build()
-
-        mf = cl.mem_flags
-        a_dest = cl.Buffer(context, mf.READ_WRITE, mat.nbytes)
-
-        prg.copy_image(queue, mat.shape, None, a_dest, img, np.int32(mat.shape[0]))
-
-        import numpy.linalg as la
-        a_result = np.empty_like(mat)
-        print la.norm(a_result-mat)
-        cl.enqueue_read_buffer(queue, a_dest, a_result).wait()
-        print la.norm(a_result-mat)
-
-
 class CLDiscretization2D(Discretization2D):
     def __init__(self, ldis, Nv, VX, VY, K, EToV, profile=0):
         Discretization2D.__init__(self, ldis, Nv, VX, VY, K, EToV)
@@ -95,7 +66,6 @@ class CLDiscretization2D(Discretization2D):
         self.diffmatrices_img = cl.Image(self.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR,
                 cl.ImageFormat(cl.channel_order.RG, cl.channel_type.FLOAT),
                 shape=drds_dev.shape[:2], hostbuf=drds_dev)
-        test_image(self.ctx, self.queue, drds_dev, self.diffmatrices_img)
 
         # geometric coefficients
         drdx_dev = np.empty((self.K, self.dimensions**2), dtype=np.float32)
@@ -106,12 +76,15 @@ class CLDiscretization2D(Discretization2D):
         self.drdx_dev = cl_array.to_device(self.ctx, self.queue, drdx_dev)
 
         # lift matrix
-        lift_dev = np.empty((ldis.Nfp, ldis.Np, 4), dtype=np.float32)
+        lift_dev = np.zeros((ldis.Np, ldis.Nfp, 4), dtype=np.float32)
         partitioned_lift = ldis.LIFT.reshape(ldis.Np, -1, ldis.Nfaces)
 
-        for i in range(ldis.Nfaces):
-            lift_dev[:, :, i] = partitioned_lift[:, :, i].T
-        self.lift_dev = cl_array.to_device(self.ctx, self.queue, lift_dev)
+        lift_dev[:, :, :ldis.Nfaces] = partitioned_lift
+        print lift_dev.strides
+
+        self.lift_img = cl.Image(self.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR,
+                cl.ImageFormat(cl.channel_order.RGBA, cl.channel_type.FLOAT),
+                shape=(ldis.Nfp, ldis.Np), hostbuf=lift_dev)
 
         # surface info
         surfinfo_dev = np.empty((self.K, 6, ldis.Nafp), dtype=np.float32)

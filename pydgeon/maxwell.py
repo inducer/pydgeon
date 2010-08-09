@@ -114,7 +114,7 @@ __kernel void MaxwellsVolume2d(int K,
   float Q;
   for(m=0; m<p_Np; ++m)
   {
-    float2 D = read_imagef(i_DrDs, samp, (int2)(n, m)).xy;
+    float4 D = read_imagef(i_DrDs, samp, (int2)(n, m));
 
     Q = l_Hx[m]; dHxdr += D.x*Q; dHxds += D.y*Q;
     Q = l_Hy[m]; dHydr += D.x*Q; dHyds += D.y*Q;
@@ -152,8 +152,13 @@ __kernel void MaxwellsSurface2d(int K,
   __global float *g_rhsHy,
   __global float *g_rhsEz,
   read_only __global float *g_surfinfo,
-  __read_only __global float4 *g_LIFT)
+  __read_only image2d_t i_LIFT)
 {
+  const sampler_t samp =
+    CLK_NORMALIZED_COORDS_FALSE
+    | CLK_ADDRESS_CLAMP
+    | CLK_FILTER_NEAREST;
+
   /* LOCKED IN to using Np threads per block */
   const int n = get_local_id(0);
   const int k = get_group_id(0);
@@ -195,27 +200,24 @@ __kernel void MaxwellsSurface2d(int K,
   if (n < p_Np)
   {
     float rhsHx = 0, rhsHy = 0, rhsEz = 0;
-
-    int sk = n;
+    int col = 0;
 
     /* can manually unroll to 3 because there are 3 faces */
-    for (m=0;p_Nfaces*p_Nfp-m;)
+    for (m=0;m < p_Nfaces*p_Nfp;)
     {
-      float4 L = g_LIFT[sk];
-      sk += p_Np;
+      float4 L = read_imagef(i_LIFT, samp, (int2)(col, n));
+      ++col;
 
       rhsHx += L.x*l_fluxHx[m];
       rhsHy += L.x*l_fluxHy[m];
       rhsEz += L.x*l_fluxEz[m];
       ++m;
 
-      /* broadcast */
       rhsHx += L.y*l_fluxHx[m];
       rhsHy += L.y*l_fluxHy[m];
       rhsEz += L.y*l_fluxEz[m];
       ++m;
 
-      /* broadcast */
       rhsHx += L.z*l_fluxHx[m];
       rhsHy += L.z*l_fluxHy[m];
       rhsEz += L.z*l_fluxEz[m];
@@ -290,7 +292,7 @@ class CLMaxwellsRhs2D:
                 d.K,
                 Hx.data, Hy.data, Ez.data,
                 rhsHx.data, rhsHy.data, rhsEz.data,
-                d.surfinfo_dev.data, d.lift_dev.data)
+                d.surfinfo_dev.data, d.lift_img)
 
         if d.profile >= 5:
             sfc_evt.wait()
