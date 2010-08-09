@@ -59,7 +59,7 @@ def main():
     print "building discretization"
     if options.cl:
         from pydgeon.opencl import CLDiscretization2D
-        d = CLDiscretization2D(ldis, *mesh, profile=options.profile)
+        d = CLDiscretization2D(ldis, *mesh, **{"profile": options.profile})
     else:
         d = pydgeon.Discretization2D(ldis, *mesh)
 
