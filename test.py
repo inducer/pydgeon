@@ -135,9 +135,19 @@ def main():
                 start_time[0] = wall_time()
             elif step > start_timing_at_step:
                 elapsed = wall_time()-start_time[0]
-                print ("step=%d, sim_time=%f, elapsed wall time=%.2f s,"
+                timed_steps = step - start_timing_at_step
+                time_per_step = elapsed/timed_steps
+
+                line = ("step=%d, sim_time=%f, elapsed wall time=%.2f s,"
                         "time per step=%f s" % (
-                        step, t, elapsed, elapsed/(step - start_timing_at_step)))
+                        step, t, elapsed, time_per_step))
+
+                if options.cl:
+                    flops = 5 * (inner_rhs.flops + 4*d.K*d.ldis.Np)
+                    line += " %f gflops/s" % (flops/time_per_step/1e9)
+
+                print line
+
 
     if options.cl:
         from pydgeon.maxwell import CLMaxwellsRhs2D

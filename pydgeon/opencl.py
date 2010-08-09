@@ -27,6 +27,12 @@ import pyopencl.array as cl_array
 
 
 
+CL_OPTIONS = ("-cl-mad-enable -cl-fast-relaxed-math "
+        "-cl-no-signed-zeros -cl-strict-aliasing")
+
+
+
+
 class CLDiscretization2D(Discretization2D):
     def __init__(self, ldis, Nv, VX, VY, K, EToV, profile=0):
         Discretization2D.__init__(self, ldis, Nv, VX, VY, K, EToV)
@@ -53,7 +59,7 @@ class CLDiscretization2D(Discretization2D):
         ldis = self.ldis
 
         # differentiation matrix
-        drds_dev = np.empty((ldis.Np, self.block_size, 4), dtype=np.float32)
+        drds_dev = np.empty((ldis.Np, self.block_size, 2), dtype=np.float32)
         drds_dev[:,:ldis.Np,0] = ldis.Dr.T
         drds_dev[:,:ldis.Np,1] = ldis.Ds.T
         self.diffmatrices_dev = cl_array.to_device(self.ctx, self.queue, drds_dev)
@@ -67,7 +73,7 @@ class CLDiscretization2D(Discretization2D):
         self.drdx_dev = cl_array.to_device(self.ctx, self.queue, drdx_dev)
 
         # lift matrix
-        lift_dev = np.empty((ldis.Nfp, ldis.Np, 4), dtype=np.float32)
+        lift_dev = np.empty((ldis.Nfp, ldis.Np, 3), dtype=np.float32)
         partitioned_lift = ldis.LIFT.reshape(ldis.Np, -1, ldis.Nfaces)
 
         for i in range(ldis.Nfaces):

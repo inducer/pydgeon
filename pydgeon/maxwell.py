@@ -81,7 +81,7 @@ __kernel void MaxwellsVolume2d(int K,
    __global float *g_rhsHx,
    __global float *g_rhsHy,
    __global float *g_rhsEz,
-   read_only __global float4 *g_DrDs,
+   read_only __global float2 *g_DrDs,
    read_only __global float *g_vgeo)
 {
   __local float l_Hx[BSIZE];
@@ -110,7 +110,7 @@ __kernel void MaxwellsVolume2d(int K,
   float Q;
   for(m=0; m<p_Np; ++m)
   {
-    float4 D = g_DrDs[(n+m*BSIZE)];
+    float2 D = g_DrDs[(n+m*BSIZE)];
 
     id = m;
     Q = l_Hx[m]; dHxdr += D.x*Q; dHxds += D.y*Q;
@@ -149,7 +149,7 @@ __kernel void MaxwellsSurface2d(int K,
   __global float *g_rhsHy,
   __global float *g_rhsEz,
   read_only __global float *g_surfinfo,
-  read_only __global float4 *g_LIFT)
+  read_only __global float3 *g_LIFT)
 {
   /* LOCKED IN to using Np threads per block */
   const int n = get_local_id(0);
@@ -198,7 +198,7 @@ __kernel void MaxwellsSurface2d(int K,
     /* can manually unroll to 3 because there are 3 faces */
     for (m=0;p_Nfaces*p_Nfp-m;)
     {
-      float4 L = g_LIFT[sk];
+      float3 L = g_LIFT[sk];
       sk += p_Np;
 
       rhsHx += L.x*l_fluxHx[m];
@@ -237,6 +237,7 @@ __kernel void MaxwellsSurface2d(int K,
 class CLMaxwellsRhs2D:
     def __init__(self, discr):
         import pyopencl as cl
+        from pydgeon.opencl import CL_OPTIONS
 
         self.discr = discr
 
@@ -246,7 +247,7 @@ class CLMaxwellsRhs2D:
                     "Np": discr.ldis.Np,
                     "BSIZE": discr.block_size,
                     }
-                ).build().MaxwellsVolume2d
+                ).build(options=CL_OPTIONS).MaxwellsVolume2d
         self.volume_kernel.set_scalar_arg_dtypes([np.int32] + 8*[None])
 
         self.surface_kernel = cl.Program(discr.ctx,
@@ -257,8 +258,10 @@ class CLMaxwellsRhs2D:
                     "Nfaces": discr.ldis.Nfaces,
                     "BSIZE": discr.block_size,
                     }
-                ).build().MaxwellsSurface2d
+                ).build(options=CL_OPTIONS).MaxwellsSurface2d
         self.surface_kernel.set_scalar_arg_dtypes([np.int32] + 8*[None])
+
+        self.flops = self.rhs_flops()
 
     def __call__(self, Hx, Hy, Ez):
         d = self.discr
@@ -306,11 +309,14 @@ class CLMaxwellsRhs2D:
         l2g_diff_flops = 2 * K * Np * (3*4+1)
         lift_flops = K * (2* Np * Nafp + Np) # including jacobian mult
         flux_flops = K * Nafp * (
-            3 # jump
+            3 # jumps
             + 15 # actual upwind flux
             )
 
-        return rs_diff_flops + l2g_diff_flops + lift_flops + flux_flops
+        return (6*rs_diff_flops  # each component in r and s
+            + l2g_diff_flops 
+            + 3*lift_flops # each component
+            + flux_flops)
 
 # }}}
 
