@@ -75,15 +75,20 @@ MAXWELL2D_VOLUME_KERNEL = """
 #define BSIZE %(BSIZE)d
 
 __kernel void MaxwellsVolume2d(int K,
-   read_only __global float *g_Hx,
-   read_only __global float *g_Hy,
-   read_only __global float *g_Ez,
+   __read_only __global float *g_Hx,
+   __read_only __global float *g_Hy,
+   __read_only __global float *g_Ez,
    __global float *g_rhsHx,
    __global float *g_rhsHy,
    __global float *g_rhsEz,
-   read_only __global float2 *g_DrDs,
-   read_only __global float *g_vgeo)
+   __read_only __global image2d_t i_DrDs,
+   __read_only __global float *g_vgeo)
 {
+  const sampler_t samp =
+    CLK_NORMALIZED_COORDS_FALSE
+    | CLK_ADDRESS_CLAMP
+    | CLK_FILTER_NEAREST;
+
   __local float l_Hx[BSIZE];
   __local float l_Hy[BSIZE];
   __local float l_Ez[BSIZE];
@@ -93,7 +98,6 @@ __kernel void MaxwellsVolume2d(int K,
   const int n = get_local_id(0);
   const int k = get_group_id(0);
 
-  /* "coalesced"  */
   int m = n+k*BSIZE;
   int id = n;
 
@@ -110,9 +114,8 @@ __kernel void MaxwellsVolume2d(int K,
   float Q;
   for(m=0; m<p_Np; ++m)
   {
-    float2 D = g_DrDs[(n+m*BSIZE)];
+    float2 D = read_imagef(i_DrDs, samp, (int2)(n, m)).xy;
 
-    id = m;
     Q = l_Hx[m]; dHxdr += D.x*Q; dHxds += D.y*Q;
     Q = l_Hy[m]; dHydr += D.x*Q; dHyds += D.y*Q;
     Q = l_Ez[m]; dEzdr += D.x*Q; dEzds += D.y*Q;
@@ -142,14 +145,14 @@ MAXWELL2D_SURFACE_KERNEL = """
 
 // start_surf_kernel
 __kernel void MaxwellsSurface2d(int K,
-  read_only __global float *g_Hx,
-  read_only __global float *g_Hy,
-  read_only __global float *g_Ez,
+  __read_only __global float *g_Hx,
+  __read_only __global float *g_Hy,
+  __read_only __global float *g_Ez,
   __global float *g_rhsHx,
   __global float *g_rhsHy,
   __global float *g_rhsEz,
   read_only __global float *g_surfinfo,
-  read_only __global float4 *g_LIFT)
+  __read_only __global float4 *g_LIFT)
 {
   /* LOCKED IN to using Np threads per block */
   const int n = get_local_id(0);
@@ -276,7 +279,7 @@ class CLMaxwellsRhs2D:
                 d.K,
                 Hx.data, Hy.data, Ez.data,
                 rhsHx.data, rhsHy.data, rhsEz.data,
-                d.diffmatrices_dev.data, d.drdx_dev.data)
+                d.diffmatrices_img, d.drdx_dev.data)
 
         surf_block_size = max(
                 ldis.Nfp*ldis.Nfaces,
