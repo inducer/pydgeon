@@ -75,26 +75,27 @@ MAXWELL2D_VOLUME_KERNEL = """
 #define BSIZE %(BSIZE)d
 
 __kernel void MaxwellsVolume2d(int K,
-                               read_only __global float *g_Hx,
-                               read_only __global float *g_Hy,
-                               read_only __global float *g_Ez,
-                               __global float *g_rhsHx,
-                               __global float *g_rhsHy,
-                               __global float *g_rhsEz,
-                               read_only __global float4 *g_DrDs,
-                               read_only __global float *g_vgeo)
+   read_only __global float *g_Hx,
+   read_only __global float *g_Hy,
+   read_only __global float *g_Ez,
+   __global float *g_rhsHx,
+   __global float *g_rhsHy,
+   __global float *g_rhsEz,
+   read_only __global float4 *g_DrDs,
+   read_only __global float *g_vgeo)
 {
-  /* LOCKED IN to using Np threads per block */
+  __local float l_Hx[BSIZE];
+  __local float l_Hy[BSIZE];
+  __local float l_Ez[BSIZE];
+
+  /* LOCKED IN to using Np work items per group */
+// start_vol_kernel
   const int n = get_local_id(0);
   const int k = get_group_id(0);
 
   /* "coalesced"  */
   int m = n+k*BSIZE;
   int id = n;
-
-  __local float l_Hx[BSIZE];
-  __local float l_Hy[BSIZE];
-  __local float l_Ez[BSIZE];
 
   l_Hx[id] = g_Hx[m];
   l_Hy[id] = g_Hy[m];
@@ -125,7 +126,9 @@ __kernel void MaxwellsVolume2d(int K,
   m = n+BSIZE*k;
   g_rhsHx[m] = -(drdy*dEzdr+dsdy*dEzds);
   g_rhsHy[m] =  (drdx*dEzdr+dsdx*dEzds);
-  g_rhsEz[m] =  (drdx*dHydr+dsdx*dHyds - drdy*dHxdr-dsdy*dHxds);
+  g_rhsEz[m] =  (drdx*dHydr+dsdx*dHyds 
+    - drdy*dHxdr-dsdy*dHxds);
+// end
 }
 """
 
@@ -137,15 +140,16 @@ MAXWELL2D_SURFACE_KERNEL = """
 #define p_Nafp (p_Nfaces*p_Nfp)
 #define BSIZE %(BSIZE)d
 
+// start_surf_kernel
 __kernel void MaxwellsSurface2d(int K,
-                              read_only __global float *g_Hx,
-                              read_only __global float *g_Hy,
-                              read_only __global float *g_Ez,
-                              __global float *g_rhsHx,
-                              __global float *g_rhsHy,
-                              __global float *g_rhsEz,
-                              read_only __global float *g_surfinfo,
-                              read_only __global float4 *g_LIFT)
+  read_only __global float *g_Hx,
+  read_only __global float *g_Hy,
+  read_only __global float *g_Ez,
+  __global float *g_rhsHx,
+  __global float *g_rhsHy,
+  __global float *g_rhsEz,
+  read_only __global float *g_surfinfo,
+  read_only __global float4 *g_LIFT)
 {
   /* LOCKED IN to using Np threads per block */
   const int n = get_local_id(0);
@@ -227,6 +231,7 @@ __kernel void MaxwellsSurface2d(int K,
     g_rhsEz[m] += rhsEz;
   }
 }
+// end
 """
 
 # }}}
