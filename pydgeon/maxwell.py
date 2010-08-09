@@ -174,21 +174,16 @@ __kernel void MaxwellsSurface2d(int K,
     const  float nx  = g_surfinfo[m]; m += p_Nafp;
     const  float ny  = g_surfinfo[m];
 
-    /* check if idP<0  */
     float dHx=0, dHy=0, dEz=0;
-    if (idP>=0)
-    {
-      dHx = 0.5f*Fsc*(    g_Hx[idP] - g_Hx[idM]);
-      dHy = 0.5f*Fsc*(    g_Hy[idP] - g_Hy[idM]);
-      dEz = 0.5f*Fsc*(Bsc*g_Ez[idP] - g_Ez[idM]);
-    }
+    dHx = 0.5f*Fsc*(    g_Hx[idP] - g_Hx[idM]);
+    dHy = 0.5f*Fsc*(    g_Hy[idP] - g_Hy[idM]);
+    dEz = 0.5f*Fsc*(Bsc*g_Ez[idP] - g_Ez[idM]);
 
     const float ndotdH = nx*dHx + ny*dHy;
 
-    m = n;
-    l_fluxHx[m] = -ny*dEz + dHx - ndotdH*nx;
-    l_fluxHy[m] =  nx*dEz + dHy - ndotdH*ny;
-    l_fluxEz[m] =  nx*dHy - ny*dHx + dEz;
+    l_fluxHx[n] = -ny*dEz + dHx - ndotdH*nx;
+    l_fluxHy[n] =  nx*dEz + dHy - ndotdH*ny;
+    l_fluxEz[n] =  nx*dHy - ny*dHx + dEz;
   }
 
   /* make sure all element data points are cached */
@@ -273,7 +268,7 @@ class CLMaxwellsRhs2D:
         rhsHy = d.volume_empty()
         rhsEz = d.volume_empty()
 
-        self.volume_kernel(d.queue, 
+        vol_evt = self.volume_kernel(d.queue, 
                 (d.K*d.block_size,), (d.block_size,),
                 d.K,
                 Hx.data, Hy.data, Ez.data,
@@ -284,14 +279,38 @@ class CLMaxwellsRhs2D:
                 ldis.Nfp*ldis.Nfaces,
                 ldis.Np)
 
-        self.surface_kernel(d.queue, 
+        sfc_evt = self.surface_kernel(d.queue, 
                 (d.K*surf_block_size,), (surf_block_size,),
                 d.K,
                 Hx.data, Hy.data, Ez.data,
                 rhsHx.data, rhsHy.data, rhsEz.data,
                 d.surfinfo_dev.data, d.lift_dev.data)
 
+        if d.profile >= 5:
+            sfc_evt.wait()
+            vol_t = (vol_evt.profile.end - vol_evt.profile.start)*1e-9
+            sfc_t = (sfc_evt.profile.end - sfc_evt.profile.start)*1e-9
+            print "vol: %g s sfc: %g s" % (vol_t, sfc_t)
+
         return rhsHx, rhsHy, rhsEz
+
+    def rhs_flops(self):
+        discr = self.discr
+        ldis = discr.ldis
+        K = discr.K
+        Np = ldis.Np
+        Nafp = ldis.Nafp
+        d = discr.dimensions
+
+        rs_diff_flops = 2 * K * Np**2
+        l2g_diff_flops = 2 * K * Np * (3*4+1)
+        lift_flops = K * (2* Np * Nafp + Np) # including jacobian mult
+        flux_flops = K * Nafp * (
+            3 # jump
+            + 15 # actual upwind flux
+            )
+
+        return rs_diff_flops + l2g_diff_flops + lift_flops + flux_flops
 
 # }}}
 

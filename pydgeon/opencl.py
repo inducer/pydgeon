@@ -28,15 +28,26 @@ import pyopencl.array as cl_array
 
 
 class CLDiscretization2D(Discretization2D):
-    def __init__(self, ldis, Nv, VX, VY, K, EToV):
+    def __init__(self, ldis, Nv, VX, VY, K, EToV, profile=0):
         Discretization2D.__init__(self, ldis, Nv, VX, VY, K, EToV)
 
         self.ctx = cl.create_some_context()
-        self.queue = cl.CommandQueue(self.ctx)
+        if profile:
+            cq_properties = cl.command_queue_properties.PROFILING_ENABLE
+        else:
+            cq_properties = 0
+
+        self.queue = cl.CommandQueue(self.ctx,
+                properties=cq_properties)
 
         self.block_size = 16*((ldis.Np+15)//16)
 
         self.prepare_dev_data()
+
+        self.profile = profile
+
+        if self.profile:
+            self.total_flops = 0
 
     def prepare_dev_data(self):
         ldis = self.ldis

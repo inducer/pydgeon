@@ -36,6 +36,8 @@ def main():
             help="visualize on-line every S steps")
     parser.add_option("--update-colors", action="store_true", 
             help="update colors in visualization (expensive)")
+    parser.add_option("--profile", type="int", 
+            help="set the profiling level (CL only)")
     parser.add_option("-i", "--ic", metavar="NAME",
             help="use initial condition NAME (try 'help')",
             default="gaussian")
@@ -51,11 +53,13 @@ def main():
         return
 
     ldis = LocalDiscretization2D(N=options.n)
+    print "loading mesh"
     mesh = pydgeon.read_2d_gambit_mesh(args[0])
 
+    print "building discretization"
     if options.cl:
         from pydgeon.opencl import CLDiscretization2D
-        d = CLDiscretization2D(ldis, *mesh)
+        d = CLDiscretization2D(ldis, *mesh, profile=options.profile)
     else:
         d = pydgeon.Discretization2D(ldis, *mesh)
 
@@ -148,6 +152,7 @@ def main():
             return make_obj_array(MaxwellRHS2D(d, *state))
 
     # time loop
+    print "entering time loop"
     start_time = [0]
     time, final_state = integrate_in_time(state, rhs, dt, 
             final_time=options.final_time, vis_hook=vis_hook)
