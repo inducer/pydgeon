@@ -73,7 +73,7 @@ class CLDiscretization2D(Discretization2D):
         self.drdx_dev = cl_array.to_device(self.ctx, self.queue, drdx_dev)
 
         # lift matrix
-        lift_dev = np.empty((ldis.Nfp, ldis.Np, 3), dtype=np.float32)
+        lift_dev = np.empty((ldis.Nfp, ldis.Np, 4), dtype=np.float32)
         partitioned_lift = ldis.LIFT.reshape(ldis.Np, -1, ldis.Nfaces)
 
         for i in range(ldis.Nfaces):

@@ -149,7 +149,7 @@ __kernel void MaxwellsSurface2d(int K,
   __global float *g_rhsHy,
   __global float *g_rhsEz,
   read_only __global float *g_surfinfo,
-  read_only __global float3 *g_LIFT)
+  read_only __global float4 *g_LIFT)
 {
   /* LOCKED IN to using Np threads per block */
   const int n = get_local_id(0);
@@ -198,7 +198,7 @@ __kernel void MaxwellsSurface2d(int K,
     /* can manually unroll to 3 because there are 3 faces */
     for (m=0;p_Nfaces*p_Nfp-m;)
     {
-      float3 L = g_LIFT[sk];
+      float4 L = g_LIFT[sk];
       sk += p_Np;
 
       rhsHx += L.x*l_fluxHx[m];
