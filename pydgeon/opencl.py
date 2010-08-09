@@ -80,7 +80,6 @@ class CLDiscretization2D(Discretization2D):
         partitioned_lift = ldis.LIFT.reshape(ldis.Np, -1, ldis.Nfaces)
 
         lift_dev[:, :, :ldis.Nfaces] = partitioned_lift
-        print lift_dev.strides
 
         self.lift_img = cl.Image(self.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR,
                 cl.ImageFormat(cl.channel_order.RGBA, cl.channel_type.FLOAT),
