@@ -787,7 +787,10 @@ class CLDiscretizationInfo3D(Discretization3D):
         for i, mat in enumerate([l.Dr, l.Ds, l.Dt]):
             drdsdt_unvec[:, :, i] = mat
 
-        self.drdsdt = cl.array.to_device(queue, drdsdt_unvec.view(dtype=dtype4)[:, :, 0])
+        self.drdsdt = cl.array.to_device(
+            queue,
+            drdsdt_unvec
+            .view(dtype=dtype4)[:, :, 0].copy(order="F"))
         self.drdsdt_img = cl.image_from_array(context, drdsdt_unvec.view(dtype=dtype4)[:, :, 0])
 
         drst_dx_unvec = np.zeros((discr.K, 4), dtype)
@@ -813,7 +816,7 @@ class CLDiscretizationInfo3D(Discretization3D):
         self.Fscale = cl.array.to_device(queue, discr.Fscale.astype(dtype))
         self.bc = cl.array.to_device(queue, discr.bc.astype(dtype))
 
-        self.LIFT = cl.array.to_device(queue, l.LIFT.astype(dtype))
+        self.LIFT = cl.array.to_device(queue, l.LIFT.copy(order="F").astype(dtype))
         self.LIFT_img = cl.image_from_array(context, l.LIFT.astype(dtype))
 
         self.volume_events = []

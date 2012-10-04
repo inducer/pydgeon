@@ -28,8 +28,8 @@ import numpy.linalg as la
 def main():
     from optparse import OptionParser
     parser = OptionParser(usage="Usage: %prog [options] <mesh.neu>")
-    parser.add_option("--loopy", action="store_true",
-            help="use loopy")
+    parser.add_option("-c", "--comp-engine",
+            help="numpy,loopy,cl")
     parser.add_option("-v", "--vis-every", type="int", metavar="S",
             help="visualize on-line every S steps")
     parser.add_option("-i", "--ic", metavar="NAME",
@@ -83,7 +83,7 @@ def main():
 
     # setup
 
-    if options.loopy:
+    if options.comp_engine == "loopy":
         from pydgeon.acoustics3d import LoopyAcousticsRHS3D
         import pyopencl as cl
         import pyopencl.array
@@ -104,15 +104,39 @@ def main():
         lpy_rhs = LoopyAcousticsRHS3D(queue, cl_info, dtype=dtype)
 
         state = make_obj_array([
-            cl.array.to_device(queue,x).astype(dtype) for x in state])
-
+                cl.array.to_device(queue,x).astype(dtype) for x in state])
+        
         def rhs(t, state):
             return make_obj_array(lpy_rhs(queue, *state))
-    else:
+        
+
+    elif options.comp_engine == "numpy":
         from pydgeon.acoustics3d import AcousticsRHS3D
 
         def rhs(t, state):
             return make_obj_array(AcousticsRHS3D(d, *state))
+    elif options.comp_engine == "cl":
+        import pyopencl as cl
+        import pyopencl.array
+        ctx = cl.create_some_context()
+        profile = True
+
+        if profile:
+            queue = cl.CommandQueue(ctx,
+                     properties=cl.command_queue_properties.PROFILING_ENABLE)
+        else:
+            queue = cl.CommandQueue(ctx)
+
+        dtype = np.float32
+
+        from pydgeon import CLDiscretizationInfo3D
+        cl_info = CLDiscretizationInfo3D(queue, d, dtype)
+
+        from pydgeon.acoustics3d import CLAcousticsRHS3D
+        cl_rhs = CLAcousticsRHS3D(queue, cl_info, dtype)
+
+        def rhs(t, state):
+            return make_obj_array(cl_rhs(*state))
 
     def vis_hook(step, t, state):
         if options.vis_every and step % options.vis_every == 0:
@@ -153,18 +177,25 @@ def main():
 
                 print "volume: %.4g GFlops/s time/step: %.3g s" % (
                         lpy_rhs.volume_flops/vol_time*1e-9,
-                        vol_time)
+                        vol_time*5) # for RK stages
                 print "surface: %.4g GFlops/s time/step: %.3g s" % (
                         lpy_rhs.surface_flops/surf_time*1e-9,
-                        surf_time)
+                        surf_time*5)
 
                 del cl_info.volume_events[:]
 
     # time loop
     print "entering time loop"
+    
     start_time = [0]
     time, final_state = integrate_in_time(state, rhs, dt,
-            final_time=options.final_time, vis_hook=vis_hook)
+                                          final_time=options.final_time, vis_hook=vis_hook)
+
+
+        
+
+
+
 
 
 

@@ -37,23 +37,23 @@ def AcousticsRHS3D(discr, Ux, Uy, Uz, Pr):
     vmapM = d.vmapM.reshape(d.K, -1)
     vmapP = d.vmapP.reshape(d.K, -1)
 
-    dUx = Ux.flat[vmapP]-Ux.flat[vmapM]
-    dUy = Uy.flat[vmapP]-Uy.flat[vmapM]
-    dUz = Uz.flat[vmapP]-Uz.flat[vmapM]
-    dPr = Pr.flat[vmapP]-Pr.flat[vmapM]
+    dUx = Ux.flat[vmapP]+(-1.0)*Ux.flat[vmapM]
+    dUy = Uy.flat[vmapP]+(-1.0)*Uy.flat[vmapM]
+    dUz = Uz.flat[vmapP]+(-1.0)*Uz.flat[vmapM]
+    dPr = Pr.flat[vmapP]+(-1.0)*Pr.flat[vmapM]
 
     # Impose reflective boundary conditions (Uz+ = -Uz-)
-    dUx.flat[d.mapB] = 0
-    dUy.flat[d.mapB] = 0
-    dUz.flat[d.mapB] = 0
-    dPr.flat[d.mapB] =-2*Pr.flat[d.vmapB]
+    dUx.flat[d.mapB] = 0.0
+    dUy.flat[d.mapB] = 0.0
+    dUz.flat[d.mapB] = 0.0
+    dPr.flat[d.mapB] =(-2.0)*Pr.flat[d.vmapB]
 
     # evaluate upwind fluxes
     alpha  = 1.0
-    R = dPr - d.nx*dUx - d.ny*dUy - d.nz*dUz
-    fluxUx = -d.nx*R
-    fluxUy = -d.ny*R
-    fluxUz = -d.nz*R
+    R = dPr +(-1.0)* d.nx*dUx +(-1.0)* d.ny*dUy +(-1.0)* d.nz*dUz
+    fluxUx = +(-1.0)*d.nx*R
+    fluxUy = +(-1.0)*d.ny*R
+    fluxUz = +(-1.0)*d.nz*R
     fluxPr =     R
 
     # local derivatives of fields
@@ -61,10 +61,10 @@ def AcousticsRHS3D(discr, Ux, Uy, Uz, Pr):
     divU = d.divergence(Ux, Uy, Uz)
 
     # compute right hand sides of the PDE's
-    rhsUx = -dPrdx  + eldot(l.LIFT, (d.Fscale*fluxUx))/2.0
-    rhsUy = -dPrdx  + eldot(l.LIFT, (d.Fscale*fluxUy))/2.0
-    rhsUz = -dPrdz  + eldot(l.LIFT, (d.Fscale*fluxUz))/2.0
-    rhsPr = -divU   + eldot(l.LIFT, (d.Fscale*fluxPr))/2.0
+    rhsUx = +(-1.0)*dPrdx  + eldot(l.LIFT, (d.Fscale*fluxUx))/2.0
+    rhsUy = +(-1.0)*dPrdx  + eldot(l.LIFT, (d.Fscale*fluxUy))/2.0
+    rhsUz = +(-1.0)*dPrdz  + eldot(l.LIFT, (d.Fscale*fluxUz))/2.0
+    rhsPr = +(-1.0)*divU   + eldot(l.LIFT, (d.Fscale*fluxPr))/2.0
 
     return rhsUx, rhsUy, rhsUz, rhsPr
 
@@ -110,7 +110,7 @@ class LoopyAcousticsRHS3D:
             [
                 lp.GlobalArg("u,v,w,p,rhsu,rhsv,rhsw,rhsp",
                     dtype, shape="K, Np", order="C"),
-                lp.GlobalArg("DrDsDt", dtype4, shape="Np, Np", order="C"),
+                lp.GlobalArg("DrDsDt", dtype4, shape="Np, Np", order="F"),
                 lp.GlobalArg("drst_dx,drst_dy,drst_dz", dtype4, shape="K"),
                 lp.ValueArg("K", np.int32, approximately=1000),
                 ],
@@ -118,25 +118,35 @@ class LoopyAcousticsRHS3D:
             defines=dict(Np=discr.ldis.Np))
 
         def transform_vol(knl):
-            knl = lp.tag_inames(knl, dict(n="l.0"))
+            knl = lp.tag_inames(knl, dict(n="l.0", k="g.0"))
             #knl = lp.change_arg_to_image(knl, "DrDsDt")
 
-            knl = lp.split_iname(knl, "k", 3, outer_tag="g.0", inner_tag="l.1")
+            # knl = lp.split_iname(knl, "k", 3, outer_tag="g.0", inner_tag="l.1")
             for name in ["u", "v", "w", "p"]:
-                knl = lp.add_prefetch(knl, "%s[k,:]" % name, ["k_inner"])
-
+                knl = lp.add_prefetch(knl, "%s[k,:]" % name)
+            for name in ["drst_dx", "drst_dy", "drst_dz"]:
+                knl = lp.add_prefetch(knl, "%s" % name)
+            knl = lp.add_prefetch(knl, "DrDsDt")
             return knl
 
-        volume_kernel = transform_vol(volume_kernel)
-        self.c_volume_kernel = lp.CompiledKernel(context, volume_kernel)
-        self.c_volume_kernel.print_code()
+        from pyopencl.characterize import get_fast_inaccurate_build_options
+        options = get_fast_inaccurate_build_options(context.devices[0])
 
-        self.volume_flops = (discr.K
-                * 4 # num components
-                *(
-                    3*discr.ldis.Np**2*2
-                    + 3*discr.ldis.Np*2
-                    ))
+        volume_kernel = transform_vol(volume_kernel)
+        self.c_volume_kernel = lp.CompiledKernel(
+            context, volume_kernel,
+            options=options)
+        #self.c_volume_kernel.print_code()
+
+        self.volume_flops = discr.K * (
+                ( 4 # num components
+                * 3*discr.ldis.Np**2*2
+                )
+                +
+                (
+                    (3*2-1)*discr.ldis.Np * 6
+                    )
+                + 2)
 
         # }}}
 
@@ -144,30 +154,30 @@ class LoopyAcousticsRHS3D:
         NfpNfaces=ldis.Nfaces*ldis.Nfp
 
         surface_kernel = lp.make_kernel(context.devices[0],
-                ["{[m,n,k]: 0<= m < NfpNfaces and 0<= n < Np and 0<= k < K }"
+                ["{[m,mp,n,k]: 0<= m,mp < NfpNfaces and 0<= n < Np and 0<= k < K }"
                     ],
                 """
                     <> idP = vmapP[k,m]
                     <> idM = vmapM[k,m]
 
-                    <> du = u[[idP]]-u[[idM]]
-                    <> dv = v[[idP]]-v[[idM]]
-                    <> dw = w[[idP]]-w[[idM]]
-                    <> dp = bc[k,m]*p[[idP]] - p[[idM]]
+                    <> du = u[[idP]]+u[[idM]]
+                    <> dv = v[[idP]]+v[[idM]]
+                    <> dw = w[[idP]]+w[[idM]]
+                    <> dp = bc[k,m]*p[[idP]] + p[[idM]]
 
-                    <> dQ = 0.5*Fscale[k,m]* \
-                            (dp - nx[k,m]*du - ny[k,m]*dv - nz[k,m]*dw)
+                    <> dQ = Fscale[k,m]* \
+                            (dp + nx[k,m]*du + ny[k,m]*dv + nz[k,m]*dw)
 
-                    <> fluxu = -nx[k,m]*dQ
-                    <> fluxv = -ny[k,m]*dQ
-                    <> fluxw = -nz[k,m]*dQ
-                    <> fluxp =          dQ
+                    <> fluxu[m] = +nx[k,m]*dQ
+                    <> fluxv[m] = +ny[k,m]*dQ
+                    <> fluxw[m] = +nz[k,m]*dQ
+                    <> fluxp[m] =          dQ
 
                     # reduction here
-                    rhsu[k,n] = sum(m, LIFT[n,m]*fluxu)
-                    rhsv[k,n] = sum(m, LIFT[n,m]*fluxv)
-                    rhsw[k,n] = sum(m, LIFT[n,m]*fluxw)
-                    rhsp[k,n] = sum(m, LIFT[n,m]*fluxp)
+                    rhsu[k,n] = sum(mp, LIFT[n,mp]*fluxu[mp])
+                    rhsv[k,n] = sum(mp, LIFT[n,mp]*fluxv[mp])
+                    rhsw[k,n] = sum(mp, LIFT[n,mp]*fluxw[mp])
+                    rhsp[k,n] = sum(mp, LIFT[n,mp]*fluxp[mp])
                     """,
                 [
                     lp.GlobalArg("vmapP,vmapM",
@@ -176,23 +186,35 @@ class LoopyAcousticsRHS3D:
                         dtype, shape="K, Np", order="C"),
                     lp.GlobalArg("nx,ny,nz,Fscale,bc",
                         dtype, shape="K, NfpNfaces", order="C"),
-                    lp.GlobalArg("LIFT", dtype, shape="Np, NfpNfaces", order="C"),
+                    lp.GlobalArg("LIFT", dtype, shape="Np, NfpNfaces", order="F"),
                     lp.ValueArg("K", np.int32, approximately=1000),
                     ],
                 name="dg_surface", assumptions="K>=1",
                 defines=dict(Np=ldis.Np, Nfp=ldis.Nfp, NfpNfaces=NfpNfaces)
                 )
 
-        surface_kernel = lp.tag_inames(surface_kernel, dict(k="g.0", n="l.0"))
+        def transform_surface_kernel(knl):
+            knl = lp.tag_inames(knl, dict(k="g.0", n="l.0", m="l.0"))
+            knl = lp.split_iname(knl, "mp", 4, inner_tag="unr")
+            knl = lp.add_prefetch(knl, "LIFT")
+            for name in ["nx", "ny", "nz", "Fscale", "bc"]:
+                knl = lp.add_prefetch(knl, name)
+            return knl
 
-        self.c_surface_kernel = lp.CompiledKernel(context, surface_kernel)
-        #self.c_surface_kernel.print_code()
+        surface_kernel = transform_surface_kernel(surface_kernel)
+        for surface_kernel in lp.generate_loop_schedules(
+                   surface_kernel, loop_priority=["mp_outer", "mp_inner"]):
+            self.c_surface_kernel = lp.CompiledKernel(
+                context, surface_kernel,
+                options=options)
+            self.c_surface_kernel.print_code()
+            break
 
         self.surface_flops = (discr.K
                 *(
                     NfpNfaces*15
                     +
-                    4*discr.ldis.Np*NfpNfaces*15
+                    4*discr.ldis.Np*NfpNfaces*2
                     ))
 
         # }}}
@@ -240,12 +262,12 @@ class LoopyAcousticsRHS3D:
 
 # {{{ kernels
 
-MAXWELL3D_VOLUME_KERNEL = """
+ACOUSTICS3D_VOLUME_KERNEL = """
 #define p_N %(N)d
 #define p_Np %(Np)d
 #define BSIZE %(BSIZE)d
 
-__kernel void MaxwellsVolume3d(int K,
+__kernel void AcousticssVolume3d(int K,
    __read_only __global float *g_Ux,
    __read_only __global float *g_Uy,
    __read_only __global float *g_Uz,
@@ -265,6 +287,7 @@ __kernel void MaxwellsVolume3d(int K,
   __local float l_Ux[BSIZE];
   __local float l_Uy[BSIZE];
   __local float l_Uz[BSIZE];
+  __local float l_Pr[BSIZE];
 
   /* LOCKED IN to using Np work items per group */
 // start_vol_kernel
@@ -308,18 +331,18 @@ __kernel void MaxwellsVolume3d(int K,
   const float dtdz = g_vgeo[8+12*k];
 
   m = n+BSIZE*k;
-  g_rhsUx[m] = -(drdx*dPrdr+dsdx*dPrds+dtdx*dPrdt);
-  g_rhsUy[m] = -(drdy*dPrdr+dsdy*dPrds+dtdy*dPrdt);
-  g_rhsUz[m] = -(drdz*dPrdr+dsdz*dPrds+dtdz*dPrdt);
-  g_rhsPr[m] = -(drdx*dUxdr+dsdx*dUxds+dtdx*dUxdt)
-               -(drdy*dUydr+dsdy*dUyds+dtdy*dUydt)
-               -(drdz*dUzdr+dsdz*dUzds+dtdz*dUzdt) ;
+  g_rhsUx[m] = (drdx*dPrdr+dsdx*dPrds+dtdx*dPrdt);
+  g_rhsUy[m] = (drdy*dPrdr+dsdy*dPrds+dtdy*dPrdt);
+  g_rhsUz[m] = (drdz*dPrdr+dsdz*dPrds+dtdz*dPrdt);
+  g_rhsPr[m] = (drdx*dUxdr+dsdx*dUxds+dtdx*dUxdt)
+               (drdy*dUydr+dsdy*dUyds+dtdy*dUydt)
+               (drdz*dUzdr+dsdz*dUzds+dtdz*dUzdt) ;
 
 // end
 }
 """
 
-MAXWELL3D_SURFACE_KERNEL = """
+ACOUSTICS3D_SURFACE_KERNEL = """
 #define p_N %(N)d
 #define p_Np %(Np)d
 #define p_Nfp %(Nfp)d
@@ -328,7 +351,7 @@ MAXWELL3D_SURFACE_KERNEL = """
 #define BSIZE %(BSIZE)d
 
 // start_surf_kernel
-__kernel void MaxwellsSurface3d(int K,
+__kernel void AcousticssSurface3d(int K,
   __read_only __global float *g_Ux,
   __read_only __global float *g_Uy,
   __read_only __global float *g_Uz,
@@ -439,31 +462,36 @@ __kernel void MaxwellsSurface3d(int K,
 
 
 
-class CLMaxwellsRhs3D:
-    def __init__(self, discr):
+class CLAcousticsRHS3D:
+    def __init__(self, queue, cl_info, dtype):
+        assert dtype == np.float32
+
+        discr = cl_info.discr
+        self.cl_info = cl_info
+
         import pyopencl as cl
         from pydgeon.opencl import CL_OPTIONS
 
         self.discr = discr
 
-        self.volume_kernel = cl.Program(discr.ctx,
-                MAXWELL3D_VOLUME_KERNEL % {
+        self.volume_kernel = cl.Program(queue.context,
+                ACOUSTICS3D_VOLUME_KERNEL % {
                     "N": discr.ldis.N,
                     "Np": discr.ldis.Np,
-                    "BSIZE": discr.block_size,
+                    "BSIZE": discr.ldis.Np,
                     }
-                ).build(options=CL_OPTIONS).MaxwellsVolume3d
+                ).build(options=CL_OPTIONS).AcousticssVolume3d
         self.volume_kernel.set_scalar_arg_dtypes([np.int32] + 8*[None])
 
-        self.surface_kernel = cl.Program(discr.ctx,
-                MAXWELL3D_SURFACE_KERNEL % {
+        self.surface_kernel = cl.Program(queue.context,
+                ACOUSTICS3D_SURFACE_KERNEL % {
                     "N": discr.ldis.N,
                     "Np": discr.ldis.Np,
                     "Nfp": discr.ldis.Nfp,
                     "Nfaces": discr.ldis.Nfaces,
-                    "BSIZE": discr.block_size,
+                    "BSIZE": discr.ldis.Np,
                     }
-                ).build(options=CL_OPTIONS).MaxwellsSurface3d
+                ).build(options=CL_OPTIONS).AcousticssSurface3d
         self.surface_kernel.set_scalar_arg_dtypes([np.int32] + 8*[None])
 
         self.flops = self.rhs_flops()
@@ -476,17 +504,16 @@ class CLMaxwellsRhs3D:
         rhsUy = d.volume_empty()
         rhsUz = d.volume_empty()
         rhsPr = d.volume_empty()
+        block_size = ldis.Np
 
         vol_evt = self.volume_kernel(d.queue,
-                (d.K*d.block_size,), (d.block_size,),
+                (d.K*block_size,), (block_size,),
                 d.K,
                 Ux.data, Uy.data, Uz.data, Pr.data,
                 rhsUx.data, rhsUy.data, rhsUz.data, rhsPr.data,
                 d.diffmatrices_img, d.drdx_dev.data)
 
-        surf_block_size = max(
-                ldis.Nfp*ldis.Nfaces,
-                ldis.Np)
+        surf_block_size = max(ldis.Nfp*ldis.Nfaces, block_size)
 
         sfc_evt = self.surface_kernel(d.queue,
                 (d.K*surf_block_size,), (surf_block_size,),
