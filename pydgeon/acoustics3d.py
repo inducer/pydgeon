@@ -160,17 +160,17 @@ class LoopyAcousticsRHS3D:
                     <> idP = vmapP[k,m]
                     <> idM = vmapM[k,m]
 
-                    <> du = u[[idP]]+u[[idM]]
-                    <> dv = v[[idP]]+v[[idM]]
-                    <> dw = w[[idP]]+w[[idM]]
-                    <> dp = bc[k,m]*p[[idP]] + p[[idM]]
+                    <> du = u[[idP]]-u[[idM]]
+                    <> dv = v[[idP]]-v[[idM]]
+                    <> dw = w[[idP]]-w[[idM]]
+                    <> dp = bc[k,m]*p[[idP]] - p[[idM]]
 
-                    <> dQ = Fscale[k,m]* \
-                            (dp + nx[k,m]*du + ny[k,m]*dv + nz[k,m]*dw)
+                    <> dQ = 0.5*Fscale[k,m]* \
+                            (dp - nx[k,m]*du - ny[k,m]*dv - nz[k,m]*dw)
 
-                    <> fluxu[m] = +nx[k,m]*dQ
-                    <> fluxv[m] = +ny[k,m]*dQ
-                    <> fluxw[m] = +nz[k,m]*dQ
+                    <> fluxu[m] = -nx[k,m]*dQ
+                    <> fluxv[m] = -ny[k,m]*dQ
+                    <> fluxw[m] = -nz[k,m]*dQ
                     <> fluxp[m] =          dQ
 
                     # reduction here
@@ -266,7 +266,7 @@ ACOUSTICS3D_VOLUME_KERNEL = """
 #define p_Np %(Np)d
 #define BSIZE %(BSIZE)d
 
-__kernel void AcousticssVolume3d(
+__kernel void AcousticsVolume3d(
    int K,
    __read_only __global float *g_Ux,
    __read_only __global float *g_Uy,
@@ -277,33 +277,30 @@ __kernel void AcousticssVolume3d(
    __global float *g_rhsUz,
    __global float *g_rhsPr,
    __global float4 *g_DrDsDt,
-//   __read_only __global image2d_t i_DrDsDt,
-   __read_only __global float *g_drst_dx,
-  __read_only __global float *g_drst_dy,
-  __read_only __global float *g_drst_dz)
+  __read_only __global float4 *g_drst_dx,
+  __read_only __global float4 *g_drst_dy,
+  __read_only __global float4 *g_drst_dz)
 {
   const sampler_t samp =
     CLK_NORMALIZED_COORDS_FALSE
     | CLK_ADDRESS_CLAMP
     | CLK_FILTER_NEAREST;
 
-  __local float l_Ux[BSIZE];
-  __local float l_Uy[BSIZE];
-  __local float l_Uz[BSIZE];
-  __local float l_Pr[BSIZE];
+  __local float l_Ux[p_Np];
+  __local float l_Uy[p_Np];
+  __local float l_Uz[p_Np];
+  __local float l_Pr[p_Np];
 
   /* LOCKED IN to using Np work items per group */
-// start_vol_kernel
   const int n = get_local_id(0);
   const int k = get_group_id(0);
 
   int m = n+k*BSIZE;
-  int id = n;
 
-  l_Ux[id] = g_Ux[m];
-  l_Uy[id] = g_Uy[m];
-  l_Uz[id] = g_Uz[m];
-  l_Pr[id] = g_Pr[m];
+  l_Ux[n] = g_Ux[m];
+  l_Uy[n] = g_Uy[m];
+  l_Uz[n] = g_Uz[m];
+  l_Pr[n] = g_Pr[m];
 
   barrier(CLK_LOCAL_MEM_FENCE);
 
@@ -316,7 +313,7 @@ __kernel void AcousticssVolume3d(
   for(m=0; m<p_Np; ++m)
   {
     //float4 D = read_imagef(i_DrDsDt, samp, (int2)(n, m));
-    float4 D = g_DrDsDt[ n + m*p_Np ];
+    float4 D = g_DrDsDt[ n + m*p_Np ]; // column major
 
     Q = l_Ux[m]; dUxdr += D.x*Q; dUxds += D.y*Q; dUxdt += D.z*Q;
     Q = l_Uy[m]; dUydr += D.x*Q; dUyds += D.y*Q; dUydt += D.z*Q;
@@ -334,8 +331,8 @@ __kernel void AcousticssVolume3d(
   g_rhsUz[m] = -(drst_dz.x*dPrdr+drst_dz.y*dPrds+drst_dz.z*dPrdt);
 
   g_rhsPr[m] = -(drst_dx.x*dUxdr+drst_dx.y*dUxds+drst_dx.z*dUxdt)
-  - (drst_dy.x*dUydr+drst_dy.y*dUyds+drst_dy.z*dUydt)
-  - (drst_dz.x*dUzdr+drst_dz.y*dUzds+drst_dz.z*dUzdt);
+               -(drst_dy.x*dUydr+drst_dy.y*dUyds+drst_dy.z*dUydt)
+               -(drst_dz.x*dUzdr+drst_dz.y*dUzds+drst_dz.z*dUzdt);
 
 // end
 }
@@ -365,15 +362,10 @@ __kernel void AcousticssSurface3d(
   read_only __global float *g_nz,
   read_only __global float *g_Fscale,
   read_only __global float *g_bc,
-  read_only __global int   *g_vmapM,
-  read_only __global int   *g_vmapP,
-  __read_only image2d_t i_LIFT)
+  read_only __global long  *g_vmapM,
+  read_only __global long  *g_vmapP,
+  read_only __global float *g_LIFT)
 {
-
-  const sampler_t samp =
-    CLK_NORMALIZED_COORDS_FALSE
-    | CLK_ADDRESS_CLAMP
-    | CLK_FILTER_NEAREST;
 
   /* LOCKED IN to using Np threads per block */
   const int n = get_local_id(0);
@@ -392,26 +384,25 @@ __kernel void AcousticssSurface3d(
     /* coalesced reads (maybe) */
     m = k*p_Nafp+n;
 
-    const  int   idM = g_vmapM [m]; // dangerous for large meshes - overflow
-    int          idP = g_vmapP [m];
+    const  int   idM = g_vmapM [m]; 
+    const  int   idP = g_vmapP [m];
     const  float Fsc = g_Fscale[m];
-    const  float Bsc = g_bc    [m];
+    const  float Bsc = (idP==idM) ? -1.f:1.f; // broken: g_bc    [m]; 
     const  float nx  = g_nx    [m];
     const  float ny  = g_ny    [m];
     const  float nz  = g_nz    [m];
 
-    float dUx=0, dUy=0, dUz=0, dPr=0;
-    dUx = 0.5f*Fsc*(    g_Ux[idP] - g_Ux[idM]);
-    dUy = 0.5f*Fsc*(    g_Uy[idP] - g_Uy[idM]);
-    dUz = 0.5f*Fsc*(    g_Uz[idP] - g_Uz[idM]);
-    dPr = 0.5f*Fsc*(Bsc*g_Pr[idP] - g_Pr[idM]);
+    float dUx =     g_Ux[idP] - g_Ux[idM];
+    float dUy =     g_Uy[idP] - g_Uy[idM];
+    float dUz =     g_Uz[idP] - g_Uz[idM];
+    float dPr = Bsc*g_Pr[idP] - g_Pr[idM];
 
-    const float R = dPr - nx*dUx - ny*dUy - nz*dUz;
+    const float dQ = 0.5f*Fsc*(dPr - nx*dUx - ny*dUy - nz*dUz);
 
-    l_fluxUx[n] =  -nx*R;
-    l_fluxUy[n] =  -ny*R;
-    l_fluxUz[n] =  -nz*R;
-    l_fluxPr[n] =      R;
+    l_fluxUx[n] =  -nx*dQ;
+    l_fluxUy[n] =  -ny*dQ;
+    l_fluxUz[n] =  -nz*dQ;
+    l_fluxPr[n] =      dQ;
   }
 
   /* make sure all element data points are cached */
@@ -420,37 +411,16 @@ __kernel void AcousticssSurface3d(
   if (n < p_Np)
   {
     float rhsUx = 0, rhsUy = 0, rhsUz = 0, rhsPr = 0;
-    int col = 0;
 
     /* can manually unroll to 4 because there are 4 faces */
-    for (m=0;m < p_Nfaces*p_Nfp;)
+    for (m=0;m < (p_Nfaces*p_Nfp);++m)
     {
-      float4 L = read_imagef(i_LIFT, samp, (int2)(col, n));
-      ++col;
+      const float L = g_LIFT[n+p_Np*m];
 
-      rhsUx += L.x*l_fluxUx[m];
-      rhsUy += L.x*l_fluxUy[m];
-      rhsUz += L.x*l_fluxUz[m];
-      rhsPr += L.x*l_fluxPr[m];
-      ++m;
-
-      rhsUx += L.y*l_fluxUx[m];
-      rhsUy += L.y*l_fluxUy[m];
-      rhsUz += L.y*l_fluxUz[m];
-      rhsPr += L.y*l_fluxPr[m];
-      ++m;
-
-      rhsUx += L.z*l_fluxUx[m];
-      rhsUy += L.z*l_fluxUy[m];
-      rhsUz += L.z*l_fluxUz[m];
-      rhsPr += L.z*l_fluxPr[m];
-      ++m;
-
-      rhsUx += L.w*l_fluxUx[m];
-      rhsUy += L.w*l_fluxUy[m];
-      rhsUz += L.w*l_fluxUz[m];
-      rhsPr += L.w*l_fluxPr[m];
-      ++m;
+      rhsUx += L*l_fluxUx[m];
+      rhsUy += L*l_fluxUy[m];
+      rhsUz += L*l_fluxUz[m];
+      rhsPr += L*l_fluxPr[m];
     }
 
     m = n+k*BSIZE;
@@ -489,7 +459,7 @@ class CLAcousticsRHS3D:
                     "Np": discr.ldis.Np,
                     "BSIZE": discr.ldis.Np,
                     }
-                ).build(options=CL_OPTIONS).AcousticssVolume3d
+                ).build(options=CL_OPTIONS).AcousticsVolume3d
         self.volume_kernel.set_scalar_arg_dtypes([np.int32] + 12*[None])
 
         self.volume_flops = discr.K * (
@@ -545,12 +515,12 @@ class CLAcousticsRHS3D:
                                      cl_info.drst_dy.data,
                                      cl_info.drst_dz.data,
                                      g_times_l=True)
-        self.queue.finish()
+
 
         surf_block_size = max(ldis.Nfp*ldis.Nfaces, block_size)
 
-        if 0:
-            sfc_evt = self.surface_kernel(self.queue,
+        # cl_info.bc.data seems broken
+        sfc_evt = self.surface_kernel(self.queue,
                                       (d.K,), (surf_block_size,),
                                       d.K,
                                       Ux.data, Uy.data, Uz.data, Pr.data,
@@ -562,12 +532,12 @@ class CLAcousticsRHS3D:
                                       cl_info.bc.data,
                                       cl_info.vmapM.data,
                                       cl_info.vmapP.data,
-                                      cl_info.LIFT_img,
+                                      cl_info.LIFT.data,
                 g_times_l=True)
-        self.queue.finish()
+
+        cl_info.surface_events.append(sfc_evt)
 
         cl_info.volume_events.append(vol_evt)
-        #cl_info.surface_events.append(sfc_evt)
 
         return rhsUx, rhsUy, rhsUz, rhsPr
 

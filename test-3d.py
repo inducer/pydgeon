@@ -79,7 +79,7 @@ def main():
         print "available ICs: sine"
         return
 
-    state = make_obj_array([ux, uy, uz, pr])
+    ic_state = make_obj_array([ux, uy, uz, pr])
 
     # compute time step size
     dt = 1e-5
@@ -113,16 +113,18 @@ def main():
         from pydgeon import CLDiscretizationInfo3D
         cl_info = CLDiscretizationInfo3D(queue, d, dtype, allocator=allocator)
 
-        rhs_obj = LoopyAcousticsRHS3D(queue, cl_info, dtype=dtype)
+        rhs_obj = loopy_rhs_obj = LoopyAcousticsRHS3D(queue, cl_info, dtype=dtype)
 
         state = make_obj_array([
-                cl.array.to_device(queue, x, allocator=allocator).astype(dtype) for x in state])
+                cl.array.to_device(queue, x, allocator=allocator).astype(dtype) for x in ic_state])
 
         def rhs(t, state):
             #print "ENTER RHS"
-            result = make_obj_array(rhs_obj(queue, *state))
+            result = make_obj_array(loopy_rhs_obj(queue, *state))
             #print "LEAVE RHS"
             return result
+
+        loopy_rhs = rhs
 
         def integrate_in_time(*args, **kwargs):
             from pydgeon.runge_kutta import integrate_in_time_cl
@@ -138,6 +140,7 @@ def main():
 
         import pyopencl as cl
         import pyopencl.array
+
         ctx = cl.create_some_context()
         profile = True
 
@@ -155,13 +158,13 @@ def main():
         cl_info = CLDiscretizationInfo3D(queue, d, dtype, allocator)
 
         from pydgeon.acoustics3d import CLAcousticsRHS3D
-        rhs_obj = CLAcousticsRHS3D(queue, cl_info, dtype)
+        rhs_obj = cl_rhs_obj = CLAcousticsRHS3D(queue, cl_info, dtype)
 
         state = make_obj_array([
-                cl.array.to_device(queue, x, allocator=allocator).astype(dtype) for x in state])
+                cl.array.to_device(queue, x, allocator=allocator).astype(dtype) for x in ic_state])
 
         def rhs(t, state):
-            return make_obj_array(rhs_obj(*state))
+            return make_obj_array(cl_rhs_obj(*state))
 
         def integrate_in_time(*args, **kwargs):
             from pydgeon.runge_kutta import integrate_in_time_cl
@@ -175,7 +178,7 @@ def main():
 
             ref_p = soln(t)[-1]
             print la.norm(p - ref_p)/la.norm(ref_p)
-            
+
             if 0:
                 vis.write_vtk("out-%04d.vtu" % step,
                               [
