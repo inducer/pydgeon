@@ -63,12 +63,18 @@ def main():
     print "%d elements" % d.K
 
     # set initial conditions
-    if options.ic == "sine":
-        m_mode, n_mode, o_mode = 3, 2, 4
+    def soln(t):
         ux = np.zeros((d.K, d.ldis.Np))
         uy = np.zeros((d.K, d.ldis.Np))
         uz = np.zeros((d.K, d.ldis.Np))
-        pr = np.sin(m_mode*np.pi*d.x)*np.sin(n_mode*np.pi*d.y)*np.sin(n_mode*np.pi*d.z)
+        pr = (np.sin(m_mode*np.pi*d.x)*np.sin(n_mode*np.pi*d.y)*np.sin(n_mode*np.pi*d.z)*
+              np.cos(np.sqrt(m_mode**2 + n_mode**2 + o_mode**2)*np.pi*t))
+
+        return ux, uy, uz, pr
+
+    if options.ic == "sine":
+        m_mode, n_mode, o_mode = 1, 1, 1
+        ux, uy, uz, pr = soln(0)
     else:
         print "available ICs: sine"
         return
@@ -107,14 +113,14 @@ def main():
         from pydgeon import CLDiscretizationInfo3D
         cl_info = CLDiscretizationInfo3D(queue, d, dtype, allocator=allocator)
 
-        lpy_rhs = LoopyAcousticsRHS3D(queue, cl_info, dtype=dtype)
+        rhs_obj = LoopyAcousticsRHS3D(queue, cl_info, dtype=dtype)
 
         state = make_obj_array([
                 cl.array.to_device(queue, x, allocator=allocator).astype(dtype) for x in state])
 
         def rhs(t, state):
             #print "ENTER RHS"
-            result = make_obj_array(lpy_rhs(queue, *state))
+            result = make_obj_array(rhs_obj(queue, *state))
             #print "LEAVE RHS"
             return result
 
@@ -149,13 +155,13 @@ def main():
         cl_info = CLDiscretizationInfo3D(queue, d, dtype, allocator)
 
         from pydgeon.acoustics3d import CLAcousticsRHS3D
-        cl_rhs = CLAcousticsRHS3D(queue, cl_info, dtype)
+        rhs_obj = CLAcousticsRHS3D(queue, cl_info, dtype)
 
         state = make_obj_array([
                 cl.array.to_device(queue, x, allocator=allocator).astype(dtype) for x in state])
 
         def rhs(t, state):
-            return make_obj_array(cl_rhs(*state))
+            return make_obj_array(rhs_obj(*state))
 
         def integrate_in_time(*args, **kwargs):
             from pydgeon.runge_kutta import integrate_in_time_cl
@@ -163,10 +169,18 @@ def main():
 
     def vis_hook(step, t, state):
         if options.vis_every and step % options.vis_every == 0:
-            print la.norm(state[-1])
-            vis.write_vtk("out-%04d.vtu" % step,
-                    [
-                        ("pressure", state[-1])
+            p = state[-1]
+            if not isinstance(p, np.ndarray):
+                p = p.get()
+
+            ref_p = soln(t)[-1]
+            print la.norm(p - ref_p)/la.norm(ref_p)
+            
+            if 0:
+                vis.write_vtk("out-%04d.vtu" % step,
+                              [
+                        ("pressure", p),
+                        ("ref_pressure", ref_p)
                         ]
                     )
 
@@ -199,10 +213,10 @@ def main():
                     for evt in cl_info.surface_events)/len(cl_info.surface_events)
 
                 print "volume: %.4g GFlops/s time/step: %.3g s" % (
-                        lpy_rhs.volume_flops/vol_time*1e-9,
+                        rhs_obj.volume_flops/vol_time*1e-9,
                         vol_time*5) # for RK stages
                 print "surface: %.4g GFlops/s time/step: %.3g s" % (
-                        lpy_rhs.surface_flops/surf_time*1e-9,
+                        rhs_obj.surface_flops/surf_time*1e-9,
                         surf_time*5)
 
                 del cl_info.volume_events[:]
