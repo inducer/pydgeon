@@ -47,7 +47,6 @@ def main():
         return
 
     from pydgeon.local import LocalDiscretization3D, JacobiGQ
-    from pydgeon.runge_kutta import integrate_in_time
     from pydgeon.tools import make_obj_array
     import pydgeon
 
@@ -75,8 +74,6 @@ def main():
         return
 
     state = make_obj_array([ux, uy, uz, pr])
-    if 0:
-        state = make_obj_array([d.to_dev(x) for x in state])
 
     # compute time step size
     dt = 1e-5
@@ -87,6 +84,7 @@ def main():
         from pydgeon.acoustics3d import LoopyAcousticsRHS3D
         import pyopencl as cl
         import pyopencl.array
+        import pyopencl.tools
         ctx = cl.create_some_context()
         profile = True
 
@@ -96,26 +94,42 @@ def main():
         else:
             queue = cl.CommandQueue(ctx)
 
+        if 0:
+            allocator = cl.tools.ImmediateAllocator(ctx)
+        elif 0:
+            allocator = None
+        else:
+            allocator = cl.tools.MemoryPool(cl.tools.ImmediateAllocator(queue))
+            #allocator.set_trace(True)
+
         dtype = np.float32
 
         from pydgeon import CLDiscretizationInfo3D
-        cl_info = CLDiscretizationInfo3D(queue, d, dtype)
+        cl_info = CLDiscretizationInfo3D(queue, d, dtype, allocator=allocator)
 
         lpy_rhs = LoopyAcousticsRHS3D(queue, cl_info, dtype=dtype)
 
         state = make_obj_array([
-                cl.array.to_device(queue,x).astype(dtype) for x in state])
-        
+                cl.array.to_device(queue, x, allocator=allocator).astype(dtype) for x in state])
+
         def rhs(t, state):
-            return make_obj_array(lpy_rhs(queue, *state))
-        
+            #print "ENTER RHS"
+            result = make_obj_array(lpy_rhs(queue, *state))
+            #print "LEAVE RHS"
+            return result
+
+        def integrate_in_time(*args, **kwargs):
+            from pydgeon.runge_kutta import integrate_in_time_cl
+            return integrate_in_time_cl(ctx, dtype, *args, **kwargs)
 
     elif options.comp_engine == "numpy":
+        from pydgeon.runge_kutta import integrate_in_time
         from pydgeon.acoustics3d import AcousticsRHS3D
 
         def rhs(t, state):
             return make_obj_array(AcousticsRHS3D(d, *state))
     elif options.comp_engine == "cl":
+
         import pyopencl as cl
         import pyopencl.array
         ctx = cl.create_some_context()
@@ -129,14 +143,23 @@ def main():
 
         dtype = np.float32
 
+        allocator = cl.tools.MemoryPool(cl.tools.ImmediateAllocator(queue))
+
         from pydgeon import CLDiscretizationInfo3D
-        cl_info = CLDiscretizationInfo3D(queue, d, dtype)
+        cl_info = CLDiscretizationInfo3D(queue, d, dtype, allocator)
 
         from pydgeon.acoustics3d import CLAcousticsRHS3D
         cl_rhs = CLAcousticsRHS3D(queue, cl_info, dtype)
 
+        state = make_obj_array([
+                cl.array.to_device(queue, x, allocator=allocator).astype(dtype) for x in state])
+
         def rhs(t, state):
             return make_obj_array(cl_rhs(*state))
+
+        def integrate_in_time(*args, **kwargs):
+            from pydgeon.runge_kutta import integrate_in_time_cl
+            return integrate_in_time_cl(ctx, dtype, *args, **kwargs)
 
     def vis_hook(step, t, state):
         if options.vis_every and step % options.vis_every == 0:
@@ -186,15 +209,10 @@ def main():
 
     # time loop
     print "entering time loop"
-    
+
     start_time = [0]
     time, final_state = integrate_in_time(state, rhs, dt,
                                           final_time=options.final_time, vis_hook=vis_hook)
-
-
-        
-
-
 
 
 

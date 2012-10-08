@@ -75,4 +75,45 @@ def integrate_in_time(state, rhs_func, dt, final_time, vis_hook=None):
 
 
 
+def integrate_in_time_cl(context, dtype, state, rhs_func, dt, final_time, vis_hook=None):
+    time = 0
+    step = 0
+
+    residual = 0*state
+
+    from pyopencl.elementwise import ElementwiseKernel, VectorArg, ScalarArg
+    from pytools.obj_array import as_oarray_func_n_args
+    axpby = ElementwiseKernel(context, [
+        ScalarArg(dtype, "a"),
+        VectorArg(dtype, "x"),
+        ScalarArg(dtype, "b"),
+        VectorArg(dtype, "y"),
+        VectorArg(dtype, "z"),
+        ],
+        "z[i] = a*x[i] + b*y[i]")
+
+    axpby = as_oarray_func_n_args(axpby)
+    # outer time step loop
+    while time < final_time:
+        if time+dt>final_time:
+            dt = final_time-time
+
+        for a, b in zip(rk4a, rk4b):
+            rhs = rhs_func(time, state)
+
+            # residual = a*residual + dt*rhs
+            axpby(a, residual, dt, rhs, residual)
+
+            # state = state + b*residual
+            axpby(1, state, b, residual, state)
+
+        if vis_hook is not None:
+            vis_hook(step, time, state)
+
+        # Increment time
+        time = time+dt
+        step += 1
+
+    return time, state
+
 # vim: foldmethod=marker

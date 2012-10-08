@@ -775,10 +775,12 @@ class Discretization3D:
                 + submesh_indices[np.newaxis,:,:]).reshape(-1, submesh_indices.shape[1])
 
 class CLDiscretizationInfo3D(Discretization3D):
-    def __init__(self, queue, discr, dtype):
+    def __init__(self, queue, discr, dtype, allocator):
         context = queue.context
         self.discr = discr
         import pyopencl as cl
+
+        self.allocator = allocator
 
         dtype4 = cl.array.vec.types[np.dtype(dtype), 4]
 
@@ -821,7 +823,6 @@ class CLDiscretizationInfo3D(Discretization3D):
 
         self.volume_events = []
         self.surface_events = []
-
 
 # }}}
 
