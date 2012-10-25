@@ -209,10 +209,10 @@ def main():
                 for evt in cl_info.surface_events:
                     evt.wait()
                 vol_time = 1e-9*sum(
-                    evt.profile.END-evt.profile.START
+                    evt.profile.END-evt.profile.SUBMIT
                     for evt in cl_info.volume_events)/len(cl_info.volume_events)
                 surf_time = 1e-9*sum(
-                    evt.profile.END-evt.profile.START
+                    evt.profile.END-evt.profile.SUBMIT
                     for evt in cl_info.surface_events)/len(cl_info.surface_events)
 
                 print "volume: %.4g GFlops/s time/step: %.3g s" % (

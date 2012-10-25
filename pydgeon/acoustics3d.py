@@ -181,7 +181,7 @@ class LoopyAcousticsRHS3D:
                     """,
                 [
                     lp.GlobalArg("vmapP,vmapM",
-                        np.int64, shape="K, NfpNfaces", order="C"),
+                        np.int32, shape="K, NfpNfaces", order="C"),
                     lp.GlobalArg("u,v,w,p,rhsu,rhsv,rhsw,rhsp",
                         dtype, shape="K, Np", order="C"),
                     lp.GlobalArg("nx,ny,nz,Fscale,bc",
@@ -276,7 +276,8 @@ __kernel void AcousticsVolume3d(
    __global float *g_rhsUy,
    __global float *g_rhsUz,
    __global float *g_rhsPr,
-   __global float4 *g_DrDsDt,
+ //  __global float4 *g_DrDsDt,
+  image2d_t  i_DrDsDt,
   __read_only __global float4 *g_drst_dx,
   __read_only __global float4 *g_drst_dy,
   __read_only __global float4 *g_drst_dz)
@@ -312,8 +313,8 @@ __kernel void AcousticsVolume3d(
   float Q;
   for(m=0; m<p_Np; ++m)
   {
-    //float4 D = read_imagef(i_DrDsDt, samp, (int2)(n, m));
-    float4 D = g_DrDsDt[ n + m*p_Np ]; // column major
+    float4 D = read_imagef(i_DrDsDt, samp, (int2)(n, m));
+    // float4 D = g_DrDsDt[ n + m*p_Np ]; // column major
 
     Q = l_Ux[m]; dUxdr += D.x*Q; dUxds += D.y*Q; dUxdt += D.z*Q;
     Q = l_Uy[m]; dUydr += D.x*Q; dUyds += D.y*Q; dUydt += D.z*Q;
@@ -362,8 +363,8 @@ __kernel void AcousticssSurface3d(
   read_only __global float *g_nz,
   read_only __global float *g_Fscale,
   read_only __global float *g_bc,
-  read_only __global long  *g_vmapM,
-  read_only __global long  *g_vmapP,
+  read_only __global int   *g_vmapM,
+  read_only __global int   *g_vmapP,
   read_only __global float *g_LIFT)
 {
 
@@ -510,7 +511,7 @@ class CLAcousticsRHS3D:
                                      d.K,
                                      Ux.data, Uy.data, Uz.data, Pr.data,
                                      rhsUx.data, rhsUy.data, rhsUz.data, rhsPr.data,
-                                     cl_info.drdsdt.data,
+                                     cl_info.drdsdt_img,  # cl_info.drdsdt.data,
                                      cl_info.drst_dx.data,
                                      cl_info.drst_dy.data,
                                      cl_info.drst_dz.data,
