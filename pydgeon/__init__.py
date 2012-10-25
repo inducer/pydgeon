@@ -808,8 +808,10 @@ class CLDiscretizationInfo3D(Discretization3D):
         self.drst_dy = cl.array.to_device(queue, drst_dy_unvec.view(dtype=dtype4)[:, 0])
         self.drst_dz = cl.array.to_device(queue, drst_dz_unvec.view(dtype=dtype4)[:, 0])
 
-        self.vmapP = cl.array.to_device(queue, discr.vmapP.copy().reshape(discr.K, -1))
-        self.vmapM = cl.array.to_device(queue, discr.vmapM.copy().reshape(discr.K, -1))
+        self.vmapP = cl.array.to_device(queue,
+                discr.vmapP.astype(np.int32).copy().reshape(discr.K, -1))
+        self.vmapM = cl.array.to_device(queue,
+                discr.vmapM.astype(np.int32).copy().reshape(discr.K, -1))
 
         self.nx = cl.array.to_device(queue, discr.nx.astype(dtype))
         self.ny = cl.array.to_device(queue, discr.ny.astype(dtype))
