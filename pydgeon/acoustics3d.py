@@ -37,10 +37,10 @@ def AcousticsRHS3D(discr, Ux, Uy, Uz, Pr):
     vmapM = d.vmapM.reshape(d.K, -1)
     vmapP = d.vmapP.reshape(d.K, -1)
 
-    dUx = Ux.flat[vmapP]+(-1.0)*Ux.flat[vmapM]
-    dUy = Uy.flat[vmapP]+(-1.0)*Uy.flat[vmapM]
-    dUz = Uz.flat[vmapP]+(-1.0)*Uz.flat[vmapM]
-    dPr = Pr.flat[vmapP]+(-1.0)*Pr.flat[vmapM]
+    dUx = Ux.flat[vmapP] -Ux.flat[vmapM]
+    dUy = Uy.flat[vmapP] -Uy.flat[vmapM]
+    dUz = Uz.flat[vmapP] -Uz.flat[vmapM]
+    dPr = Pr.flat[vmapP] -Pr.flat[vmapM]
 
     # Impose reflective boundary conditions (Uz+ = -Uz-)
     dUx.flat[d.mapB] = 0.0
@@ -50,10 +50,10 @@ def AcousticsRHS3D(discr, Ux, Uy, Uz, Pr):
 
     # evaluate upwind fluxes
     alpha  = 1.0
-    R = dPr +(-1.0)* d.nx*dUx +(-1.0)* d.ny*dUy +(-1.0)* d.nz*dUz
-    fluxUx = +(-1.0)*d.nx*R
-    fluxUy = +(-1.0)*d.ny*R
-    fluxUz = +(-1.0)*d.nz*R
+    R = dPr - d.nx*dUx - d.ny*dUy - d.nz*dUz
+    fluxUx = -d.nx*R
+    fluxUy = -d.ny*R
+    fluxUz = -d.nz*R
     fluxPr =     R
 
     # local derivatives of fields
@@ -61,10 +61,10 @@ def AcousticsRHS3D(discr, Ux, Uy, Uz, Pr):
     divU = d.divergence(Ux, Uy, Uz)
 
     # compute right hand sides of the PDE's
-    rhsUx = +(-1.0)*dPrdx  + eldot(l.LIFT, (d.Fscale*fluxUx))/2.0
-    rhsUy = +(-1.0)*dPrdx  + eldot(l.LIFT, (d.Fscale*fluxUy))/2.0
-    rhsUz = +(-1.0)*dPrdz  + eldot(l.LIFT, (d.Fscale*fluxUz))/2.0
-    rhsPr = +(-1.0)*divU   + eldot(l.LIFT, (d.Fscale*fluxPr))/2.0
+    rhsUx = -dPrdx + eldot(l.LIFT, (d.Fscale*fluxUx))/2.0
+    rhsUy = -dPrdx + eldot(l.LIFT, (d.Fscale*fluxUy))/2.0
+    rhsUz = -dPrdz + eldot(l.LIFT, (d.Fscale*fluxUz))/2.0
+    rhsPr = -divU  + eldot(l.LIFT, (d.Fscale*fluxPr))/2.0
 
     return rhsUx, rhsUy, rhsUz, rhsPr
 
@@ -101,11 +101,11 @@ class LoopyAcousticsRHS3D:
                 <> dp_drst = sum(m, DrDsDt[n,m]*p[k,m])
 
                 # volume flux
-                rhsu[k,n] = dot(drst_dx[k],dp_drst)
-                rhsv[k,n] = dot(drst_dy[k],dp_drst)
-                rhsw[k,n] = dot(drst_dz[k],dp_drst)
-                rhsp[k,n] = dot(drst_dx[k], du_drst) + dot(drst_dy[k], dv_drst) \
-                    + dot(drst_dz[k], dw_drst)
+                rhsu[k,n] = - dot(drst_dx[k],dp_drst)
+                rhsv[k,n] = - dot(drst_dy[k],dp_drst)
+                rhsw[k,n] = - dot(drst_dz[k],dp_drst)
+                rhsp[k,n] = - (dot(drst_dx[k], du_drst) + dot(drst_dy[k], dv_drst) \
+                    + dot(drst_dz[k], dw_drst))
                 """,
             [
                 lp.GlobalArg("u,v,w,p,rhsu,rhsv,rhsw,rhsp",
@@ -160,17 +160,17 @@ class LoopyAcousticsRHS3D:
                     <> idP = vmapP[k,m]
                     <> idM = vmapM[k,m]
 
-                    <> du = u[[idP]]+u[[idM]]
-                    <> dv = v[[idP]]+v[[idM]]
-                    <> dw = w[[idP]]+w[[idM]]
-                    <> dp = bc[k,m]*p[[idP]] + p[[idM]]
+                    <> du = u[[idP]]-u[[idM]]
+                    <> dv = v[[idP]]-v[[idM]]
+                    <> dw = w[[idP]]-w[[idM]]
+                    <> dp = bc[k,m]*p[[idP]] - p[[idM]]
 
-                    <> dQ = Fscale[k,m]* \
-                            (dp + nx[k,m]*du + ny[k,m]*dv + nz[k,m]*dw)
+                    <> dQ = 0.5*Fscale[k,m]* \
+                            (dp - nx[k,m]*du - ny[k,m]*dv - nz[k,m]*dw)
 
-                    <> fluxu[m] = +nx[k,m]*dQ
-                    <> fluxv[m] = +ny[k,m]*dQ
-                    <> fluxw[m] = +nz[k,m]*dQ
+                    <> fluxu[m] = -nx[k,m]*dQ
+                    <> fluxv[m] = -ny[k,m]*dQ
+                    <> fluxw[m] = -nz[k,m]*dQ
                     <> fluxp[m] =          dQ
 
                     # reduction here
@@ -238,18 +238,18 @@ class LoopyAcousticsRHS3D:
         cl_info.volume_events.append(evt)
 
         evt, (rhsUx, rhsUy, rhsUz, rhsPr) = self.c_surface_kernel(
-                queue,
-                vmapP=cl_info.vmapP,
-                vmapM=cl_info.vmapM,
-                u=Ux, v=Uy, w=Uz, p=Pr,
-                rhsu=rhsUx, rhsv=rhsUy, rhsw=rhsUz, rhsp=rhsPr,
-                nx=cl_info.nx,
-                ny=cl_info.ny,
-                nz=cl_info.nz,
-                Fscale=cl_info.Fscale,
-                bc=cl_info.bc,
-                LIFT=cl_info.LIFT, K=d.K, warn_numpy=True,
-                allocator=cl_info.allocator)
+            queue,
+            vmapP=cl_info.vmapP,
+            vmapM=cl_info.vmapM,
+            u=Ux, v=Uy, w=Uz, p=Pr,
+            rhsu=rhsUx, rhsv=rhsUy, rhsw=rhsUz, rhsp=rhsPr,
+            nx=cl_info.nx,
+            ny=cl_info.ny,
+            nz=cl_info.nz,
+            Fscale=cl_info.Fscale,
+            bc=cl_info.bc,
+            LIFT=cl_info.LIFT, K=d.K, warn_numpy=True,
+            allocator=cl_info.allocator)
 
         cl_info.surface_events.append(evt)
 
@@ -266,7 +266,7 @@ ACOUSTICS3D_VOLUME_KERNEL = """
 #define p_Np %(Np)d
 #define BSIZE %(BSIZE)d
 
-__kernel void AcousticssVolume3d(
+__kernel void AcousticsVolume3d(
    int K,
    __read_only __global float *g_Ux,
    __read_only __global float *g_Uy,
@@ -276,45 +276,44 @@ __kernel void AcousticssVolume3d(
    __global float *g_rhsUy,
    __global float *g_rhsUz,
    __global float *g_rhsPr,
-   __read_only __global image2d_t i_DrDsDt,
-   __read_only __global float *g_drst_dx,
-  __read_only __global float *g_drst_dy,
-  __read_only __global float *g_drst_dz)
+   __global float4 *g_DrDsDt,
+  __read_only __global float4 *g_drst_dx,
+  __read_only __global float4 *g_drst_dy,
+  __read_only __global float4 *g_drst_dz)
 {
   const sampler_t samp =
     CLK_NORMALIZED_COORDS_FALSE
     | CLK_ADDRESS_CLAMP
     | CLK_FILTER_NEAREST;
 
-  __local float l_Ux[BSIZE];
-  __local float l_Uy[BSIZE];
-  __local float l_Uz[BSIZE];
-  __local float l_Pr[BSIZE];
+  __local float l_Ux[p_Np];
+  __local float l_Uy[p_Np];
+  __local float l_Uz[p_Np];
+  __local float l_Pr[p_Np];
 
   /* LOCKED IN to using Np work items per group */
-// start_vol_kernel
   const int n = get_local_id(0);
   const int k = get_group_id(0);
 
   int m = n+k*BSIZE;
-  int id = n;
 
-  l_Ux[id] = g_Ux[m];
-  l_Uy[id] = g_Uy[m];
-  l_Uz[id] = g_Uz[m];
-  l_Pr[id] = g_Pr[m];
+  l_Ux[n] = g_Ux[m];
+  l_Uy[n] = g_Uy[m];
+  l_Uz[n] = g_Uz[m];
+  l_Pr[n] = g_Pr[m];
 
   barrier(CLK_LOCAL_MEM_FENCE);
 
-  float dUxdr=0,dUxds=0,dUxdt;
-  float dUydr=0,dUyds=0,dUydt;
-  float dUzdr=0,dUzds=0,dUzdt;
-  float dPrdr=0,dPrds=0,dPrdt;
+  float dUxdr=0,dUxds=0,dUxdt=0;
+  float dUydr=0,dUyds=0,dUydt=0;
+  float dUzdr=0,dUzds=0,dUzdt=0;
+  float dPrdr=0,dPrds=0,dPrdt=0;
 
   float Q;
   for(m=0; m<p_Np; ++m)
   {
-    float4 D = read_imagef(i_DrDsDt, samp, (int2)(n, m));
+    //float4 D = read_imagef(i_DrDsDt, samp, (int2)(n, m));
+    float4 D = g_DrDsDt[ n + m*p_Np ]; // column major
 
     Q = l_Ux[m]; dUxdr += D.x*Q; dUxds += D.y*Q; dUxdt += D.z*Q;
     Q = l_Uy[m]; dUydr += D.x*Q; dUyds += D.y*Q; dUydt += D.z*Q;
@@ -327,13 +326,13 @@ __kernel void AcousticssVolume3d(
   const float4 drst_dz = g_drst_dz[k];
 
   m = n+BSIZE*k;
-  g_rhsUx[m] = (drst_dx.x*dPrdr+drst_dx.y*dPrds+drst_dx.z*dPrdt);
-  g_rhsUy[m] = (drst_dy.x*dPrdr+drst_dy.y*dPrds+drst_dy.z*dPrdt);
-  g_rhsUz[m] = (drst_dz.x*dPrdr+drst_dz.y*dPrds+drst_dz.z*dPrdt);
+  g_rhsUx[m] = -(drst_dx.x*dPrdr+drst_dx.y*dPrds+drst_dx.z*dPrdt);
+  g_rhsUy[m] = -(drst_dy.x*dPrdr+drst_dy.y*dPrds+drst_dy.z*dPrdt);
+  g_rhsUz[m] = -(drst_dz.x*dPrdr+drst_dz.y*dPrds+drst_dz.z*dPrdt);
 
-  g_rhsPr[m] = (drst_dx.x*dUxdr+drst_dx.y*dUxds+drst_dx.z*dUxdt)
-  + (drst_dy.x*dUydr+drst_dy.y*dUyds+drst_dy.z*dUydt)
-  + (drst_dz.x*dUzdr+drst_dz.y*dUzds+drst_dz.z*dUzdt);
+  g_rhsPr[m] = -(drst_dx.x*dUxdr+drst_dx.y*dUxds+drst_dx.z*dUxdt)
+               -(drst_dy.x*dUydr+drst_dy.y*dUyds+drst_dy.z*dUydt)
+               -(drst_dz.x*dUzdr+drst_dz.y*dUzds+drst_dz.z*dUzdt);
 
 // end
 }
@@ -358,13 +357,15 @@ __kernel void AcousticssSurface3d(
   __global float *g_rhsUy,
   __global float *g_rhsUz,
   __global float *g_rhsPr,
-  read_only __global float *g_surfinfo,
-  __read_only image2d_t i_LIFT)
+  read_only __global float *g_nx,
+  read_only __global float *g_ny,
+  read_only __global float *g_nz,
+  read_only __global float *g_Fscale,
+  read_only __global float *g_bc,
+  read_only __global long  *g_vmapM,
+  read_only __global long  *g_vmapP,
+  read_only __global float *g_LIFT)
 {
-  const sampler_t samp =
-    CLK_NORMALIZED_COORDS_FALSE
-    | CLK_ADDRESS_CLAMP
-    | CLK_FILTER_NEAREST;
 
   /* LOCKED IN to using Np threads per block */
   const int n = get_local_id(0);
@@ -381,28 +382,27 @@ __kernel void AcousticssSurface3d(
   if (n < p_Nafp)
   {
     /* coalesced reads (maybe) */
-    m = 7*(k*p_Nafp)+n;
+    m = k*p_Nafp+n;
 
-    const  int   idM = g_surfinfo[m]; m += p_Nafp; // dangerous for large meshes - overflow
-    int          idP = g_surfinfo[m]; m += p_Nafp;
-    const  float Fsc = g_surfinfo[m]; m += p_Nafp;
-    const  float Bsc = g_surfinfo[m]; m += p_Nafp;
-    const  float nx  = g_surfinfo[m]; m += p_Nafp;
-    const  float ny  = g_surfinfo[m]; m += p_Nafp;
-    const  float nz  = g_surfinfo[m]; m += p_Nafp;
+    const  int   idM = g_vmapM [m]; 
+    const  int   idP = g_vmapP [m];
+    const  float Fsc = g_Fscale[m];
+    const  float Bsc = (idP==idM) ? -1.f:1.f; // broken: g_bc    [m]; 
+    const  float nx  = g_nx    [m];
+    const  float ny  = g_ny    [m];
+    const  float nz  = g_nz    [m];
 
-    float dUx=0, dUy=0, dUz=0, dPr=0;
-    dUx = 0.5f*Fsc*(    g_Ux[idP] - g_Ux[idM]);
-    dUy = 0.5f*Fsc*(    g_Uy[idP] - g_Uy[idM]);
-    dUz = 0.5f*Fsc*(    g_Uz[idP] - g_Uz[idM]);
-    dPr = 0.5f*Fsc*(Bsc*g_Pr[idP] - g_Pr[idM]);
+    float dUx =     g_Ux[idP] - g_Ux[idM];
+    float dUy =     g_Uy[idP] - g_Uy[idM];
+    float dUz =     g_Uz[idP] - g_Uz[idM];
+    float dPr = Bsc*g_Pr[idP] - g_Pr[idM];
 
-    const float R = dPr - nx*dUx - ny*dUy - nz*dUz;
+    const float dQ = 0.5f*Fsc*(dPr - nx*dUx - ny*dUy - nz*dUz);
 
-    l_fluxUx[n] =  nx*R;
-    l_fluxUy[n] =  ny*R;
-    l_fluxUz[n] =  nz*R;
-    l_fluxPr[n] =    -R;
+    l_fluxUx[n] =  -nx*dQ;
+    l_fluxUy[n] =  -ny*dQ;
+    l_fluxUz[n] =  -nz*dQ;
+    l_fluxPr[n] =      dQ;
   }
 
   /* make sure all element data points are cached */
@@ -411,37 +411,16 @@ __kernel void AcousticssSurface3d(
   if (n < p_Np)
   {
     float rhsUx = 0, rhsUy = 0, rhsUz = 0, rhsPr = 0;
-    int col = 0;
 
     /* can manually unroll to 4 because there are 4 faces */
-    for (m=0;m < p_Nfaces*p_Nfp;)
+    for (m=0;m < (p_Nfaces*p_Nfp);++m)
     {
-      float4 L = read_imagef(i_LIFT, samp, (int2)(col, n));
-      ++col;
+      const float L = g_LIFT[n+p_Np*m];
 
-      rhsUx += L.x*l_fluxUx[m];
-      rhsUy += L.x*l_fluxUy[m];
-      rhsUz += L.x*l_fluxUz[m];
-      rhsPr += L.x*l_fluxPr[m];
-      ++m;
-
-      rhsUx += L.y*l_fluxUx[m];
-      rhsUy += L.y*l_fluxUy[m];
-      rhsUz += L.y*l_fluxUz[m];
-      rhsPr += L.y*l_fluxPr[m];
-      ++m;
-
-      rhsUx += L.z*l_fluxUx[m];
-      rhsUy += L.z*l_fluxUy[m];
-      rhsUz += L.z*l_fluxUz[m];
-      rhsPr += L.z*l_fluxPr[m];
-      ++m;
-
-      rhsUx += L.w*l_fluxUx[m];
-      rhsUy += L.w*l_fluxUy[m];
-      rhsUz += L.w*l_fluxUz[m];
-      rhsPr += L.w*l_fluxPr[m];
-      ++m;
+      rhsUx += L*l_fluxUx[m];
+      rhsUy += L*l_fluxUy[m];
+      rhsUz += L*l_fluxUz[m];
+      rhsPr += L*l_fluxPr[m];
     }
 
     m = n+k*BSIZE;
@@ -451,6 +430,7 @@ __kernel void AcousticssSurface3d(
     g_rhsUz[m] += rhsUz;
     g_rhsPr[m] += rhsPr;
   }
+
 }
 // end
 """
@@ -479,8 +459,18 @@ class CLAcousticsRHS3D:
                     "Np": discr.ldis.Np,
                     "BSIZE": discr.ldis.Np,
                     }
-                ).build(options=CL_OPTIONS).AcousticssVolume3d
-        self.volume_kernel.set_scalar_arg_dtypes([np.int32] + 10*[None])
+                ).build(options=CL_OPTIONS).AcousticsVolume3d
+        self.volume_kernel.set_scalar_arg_dtypes([np.int32] + 12*[None])
+
+        self.volume_flops = discr.K * (
+                ( 4 # num components
+                * 3*discr.ldis.Np**2*2
+                )
+                +
+                (
+                    (3*2-1)*discr.ldis.Np * 6
+                    )
+                + 2)
 
         self.surface_kernel = cl.Program(queue.context,
                 ACOUSTICS3D_SURFACE_KERNEL % {
@@ -491,9 +481,15 @@ class CLAcousticsRHS3D:
                     "BSIZE": discr.ldis.Np,
                     }
                 ).build(options=CL_OPTIONS).AcousticssSurface3d
-        self.surface_kernel.set_scalar_arg_dtypes([np.int32] + 10*[None])
+        self.surface_kernel.set_scalar_arg_dtypes([np.int32] + 16*[None])
 
-        self.flops = self.rhs_flops()
+        NfpNfaces = discr.ldis.Nfp * discr.ldis.Nfaces
+        self.surface_flops = (discr.K
+                *(
+                    NfpNfaces*15
+                    +
+                    4*discr.ldis.Np*NfpNfaces*2
+                    ))
 
     def __call__(self, Ux, Uy, Uz, Pr):
         d = self.discr
@@ -514,27 +510,34 @@ class CLAcousticsRHS3D:
                                      d.K,
                                      Ux.data, Uy.data, Uz.data, Pr.data,
                                      rhsUx.data, rhsUy.data, rhsUz.data, rhsPr.data,
-                                     d.diffmatrices_img,
-                                     d.drst_dx_dev.data,
-                                     d.drst_dy_dev.data,
-                                     d.drst_dz_dev.data,
+                                     cl_info.drdsdt.data,
+                                     cl_info.drst_dx.data,
+                                     cl_info.drst_dy.data,
+                                     cl_info.drst_dz.data,
                                      g_times_l=True)
+
 
         surf_block_size = max(ldis.Nfp*ldis.Nfaces, block_size)
 
+        # cl_info.bc.data seems broken
         sfc_evt = self.surface_kernel(self.queue,
-                (d.K,), (surf_block_size,),
-                d.K,
-                Ux.data, Uy.data, Uz.data, Pr.data,
-                rhsUx.data, rhsUy.data, rhsUz.data, rhsPr.data,
-                d.surfinfo_dev.data, d.lift_img,
+                                      (d.K,), (surf_block_size,),
+                                      d.K,
+                                      Ux.data, Uy.data, Uz.data, Pr.data,
+                                      rhsUx.data, rhsUy.data, rhsUz.data, rhsPr.data,
+                                      cl_info.nx.data,
+                                      cl_info.ny.data,
+                                      cl_info.nz.data,
+                                      cl_info.Fscale.data,
+                                      cl_info.bc.data,
+                                      cl_info.vmapM.data,
+                                      cl_info.vmapP.data,
+                                      cl_info.LIFT.data,
                 g_times_l=True)
 
-        if d.profile >= 5:
-            sfc_evt.wait()
-            vol_t = (vol_evt.profile.end - vol_evt.profile.start)*1e-9
-            sfc_t = (sfc_evt.profile.end - sfc_evt.profile.start)*1e-9
-            print "vol: %g s sfc: %g s" % (vol_t, sfc_t)
+        cl_info.surface_events.append(sfc_evt)
+
+        cl_info.volume_events.append(vol_evt)
 
         return rhsUx, rhsUy, rhsUz, rhsPr
 
