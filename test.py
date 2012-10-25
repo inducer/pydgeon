@@ -104,7 +104,7 @@ def main():
     # setup
     if options.vis_every:
         try:
-            import enthought.mayavi.mlab as mayavi
+            import mayavi.mlab as mayavi
         except ImportError:
             options.vis_every = 0
 
