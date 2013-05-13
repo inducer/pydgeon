@@ -36,7 +36,7 @@ def read_2d_gambit_mesh(file_name):
     with open(file_name, 'r') as inf:
         # read after intro
         for i in range(6):
-            line = inf.readline()
+            inf.readline()
 
         # Find number of nodes and number of elements
         dims = inf.readline().split()
@@ -44,7 +44,7 @@ def read_2d_gambit_mesh(file_name):
         K = int(dims[1])
 
         for i in range(2):
-            line = inf.readline()
+            inf.readline()
 
         # read node coordinates
         VX = np.zeros(Nv); VY = np.zeros(Nv)
@@ -53,7 +53,7 @@ def read_2d_gambit_mesh(file_name):
             VX[i] = float(tmpx[1]); VY[i] = float(tmpx[2])
 
         for i in range(2):
-            line = inf.readline()
+            inf.readline()
 
         # read element to node connectivity
         EToV = np.zeros((K, 3))
@@ -76,7 +76,7 @@ def read_3d_gambit_mesh(file_name):
     with open(file_name, 'r') as inf:
         # read after intro
         for i in range(6):
-            line = inf.readline()
+            inf.readline()
 
         # Find number of nodes and number of elements
         dims = inf.readline().split()
@@ -84,7 +84,7 @@ def read_3d_gambit_mesh(file_name):
         K = int(dims[1])
 
         for i in range(2):
-            line = inf.readline()
+            inf.readline()
 
         # read node coordinates
         VX = np.zeros(Nv);
@@ -97,7 +97,7 @@ def read_3d_gambit_mesh(file_name):
             VZ[i] = float(tmpx[3])
 
         for i in range(2):
-            line = inf.readline()
+            inf.readline()
 
         # read element to node connectivity (check this)
         EToV = np.zeros((K, 4))
@@ -174,7 +174,7 @@ def Normals2D(ldis, x, y, K):
     yr = eldot(l.Dr, y)
     xs = eldot(l.Ds, x)
     ys = eldot(l.Ds, y)
-    J = xr*ys-xs*yr
+    #J = xr*ys-xs*yr
 
     # interpolate geometric factors to face nodes
     fxr = xr[:, l.FmaskF]; fxs = xs[:, l.FmaskF]
@@ -267,10 +267,10 @@ def Connect2D(EToV):
     Nfaces = 3
     # Find number of elements and vertices
     K = EToV.shape[0]
-    Nv = EToV.max()+1
+    #Nv = EToV.max()+1
 
     # Create face to node connectivity matrix
-    TotalFaces = Nfaces*K
+    #TotalFaces = Nfaces*K
 
     # List of local face to local vertex connections
     vn = np.int32([[0,1],[1,2],[0,2]])
@@ -327,10 +327,10 @@ def Connect3D(EToV):
     Nfaces = 4
     # Find number of elements and vertices
     K = EToV.shape[0]
-    Nv = EToV.max()+1
+    #Nv = EToV.max()+1
 
     # Create face to node connectivity matrix
-    TotalFaces = Nfaces*K
+    #TotalFaces = Nfaces*K
 
     # List of local face to local vertex connections
     vn = np.int32([[0,1,2],[0,1,3],[1,2,3],[0,2,3]])
@@ -601,7 +601,7 @@ class Discretization2D:
         return area/sper
 
     def gen_vis_triangles(self):
-        submesh_indices = np.array(list(self.ldis.gen_submesh_indices()))
+        submesh_indices = np.array(list(self.ldis.get_submesh_indices()))
 
         Np = self.ldis.Np
         return (np.arange(0, self.K*Np, Np)[:,np.newaxis,np.newaxis]

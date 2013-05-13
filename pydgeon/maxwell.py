@@ -75,14 +75,14 @@ MAXWELL2D_VOLUME_KERNEL = """
 #define BSIZE %(BSIZE)d
 
 __kernel void MaxwellsVolume2d(int K,
-   __read_only __global float *g_Hx,
-   __read_only __global float *g_Hy,
-   __read_only __global float *g_Ez,
+   __global float *g_Hx,
+   __global float *g_Hy,
+   __global float *g_Ez,
    __global float *g_rhsHx,
    __global float *g_rhsHy,
    __global float *g_rhsEz,
-   __read_only __global image2d_t i_DrDs,
-   __read_only __global float *g_vgeo)
+   __read_only image2d_t i_DrDs,
+   __global float *g_vgeo)
 {
   const sampler_t samp =
     CLK_NORMALIZED_COORDS_FALSE
@@ -143,11 +143,10 @@ MAXWELL2D_SURFACE_KERNEL = """
 #define p_Nafp (p_Nfaces*p_Nfp)
 #define BSIZE %(BSIZE)d
 
-// start_surf_kernel
 __kernel void MaxwellsSurface2d(int K,
-  __read_only __global float *g_Hx,
-  __read_only __global float *g_Hy,
-  __read_only __global float *g_Ez,
+  __global float *g_Hx,
+  __global float *g_Hy,
+  __global float *g_Ez,
   __global float *g_rhsHx,
   __global float *g_rhsHy,
   __global float *g_rhsEz,
@@ -160,6 +159,7 @@ __kernel void MaxwellsSurface2d(int K,
     | CLK_FILTER_NEAREST;
 
   /* LOCKED IN to using Np threads per block */
+// start_surf_kernel_flux
   const int n = get_local_id(0);
   const int k = get_group_id(0);
 
@@ -196,7 +196,9 @@ __kernel void MaxwellsSurface2d(int K,
 
   /* make sure all element data points are cached */
   barrier(CLK_LOCAL_MEM_FENCE);
+// end
 
+// start_surf_kernel_lift
   if (n < p_Np)
   {
     float rhsHx = 0, rhsHy = 0, rhsEz = 0;
@@ -230,8 +232,8 @@ __kernel void MaxwellsSurface2d(int K,
     g_rhsHy[m] += rhsHy;
     g_rhsEz[m] += rhsEz;
   }
-}
 // end
+}
 """
 
 # }}}
@@ -308,7 +310,7 @@ class CLMaxwellsRhs2D:
         K = discr.K
         Np = ldis.Np
         Nafp = ldis.Nafp
-        d = discr.dimensions
+        #d = discr.dimensions
 
         rs_diff_flops = 2 * K * Np**2
         l2g_diff_flops = 2 * K * Np * (3*4+1)

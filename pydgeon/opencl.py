@@ -73,7 +73,7 @@ class CLDiscretization2D(Discretization2D):
         drdx_dev[:,1] = self.ry[:, 0]
         drdx_dev[:,2] = self.sx[:, 0]
         drdx_dev[:,3] = self.sy[:, 0]
-        self.drdx_dev = cl_array.to_device(self.ctx, self.queue, drdx_dev)
+        self.drdx_dev = cl_array.to_device(self.queue, drdx_dev)
 
         # lift matrix
         lift_dev = np.zeros((ldis.Np, ldis.Nfp, 4), dtype=np.float32)
@@ -101,20 +101,20 @@ class CLDiscretization2D(Discretization2D):
         surfinfo_dev[:, 4, :] = self.nx
         surfinfo_dev[:, 5, :] = self.ny
 
-        self.surfinfo_dev = cl_array.to_device(self.ctx, self.queue, surfinfo_dev)
+        self.surfinfo_dev = cl_array.to_device(self.queue, surfinfo_dev)
 
     def to_dev(self, vec):
         dev_vec = np.empty((self.K, self.block_size), dtype=np.float32)
         dev_vec[:, :self.ldis.Np] = vec
-        return cl_array.to_device(self.ctx, self.queue, dev_vec)
+        return cl_array.to_device(self.queue, dev_vec)
 
     def from_dev(self, vec):
         return vec.get()[:, :self.ldis.Np]
 
     def volume_empty(self):
-        return cl_array.Array(
-                self.ctx, queue=self.queue,
-                shape=(self.K, self.block_size),
+        return cl_array.empty(
+                self.queue,
+                (self.K, self.block_size),
                 dtype=np.float32)
 
 # vim: foldmethod=marker
