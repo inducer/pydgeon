@@ -14,24 +14,19 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-
-
-
 from __future__ import division
 
 import numpy as np
 
 
-
-
 # {{{ Runge-Kutta coefficients
 
-rk4a = np.array([0 ,
+rk4a = np.array([0,
         -567301805773/1357537059087,
         -2404267990393/2016746695238,
         -3550918686646/2091501179385,
         -1275806237668/842570457699])
-rk4b = [ 1432997174477/9575080441755,
+rk4b = [1432997174477/9575080441755,
          5161836677717/13612068292357,
          1720146321549/2090206949498,
          3134564353537/4481467310338,
@@ -45,8 +40,6 @@ rk4c = [0,
 # }}}
 
 
-
-
 def integrate_in_time(state, rhs_func, dt, final_time, vis_hook=None):
     time = 0
     step = 0
@@ -55,7 +48,7 @@ def integrate_in_time(state, rhs_func, dt, final_time, vis_hook=None):
 
     # outer time step loop
     while time < final_time:
-        if time+dt>final_time:
+        if time+dt > final_time:
             dt = final_time-time
 
         for a, b in zip(rk4a, rk4b):
@@ -73,9 +66,8 @@ def integrate_in_time(state, rhs_func, dt, final_time, vis_hook=None):
     return time, state
 
 
-
-
-def integrate_in_time_cl(context, dtype, state, rhs_func, dt, final_time, vis_hook=None):
+def integrate_in_time_cl(context, dtype, state, rhs_func, dt, final_time,
+        vis_hook=None):
     time = 0
     step = 0
 
@@ -95,7 +87,7 @@ def integrate_in_time_cl(context, dtype, state, rhs_func, dt, final_time, vis_ho
     axpby = as_oarray_func_n_args(axpby)
     # outer time step loop
     while time < final_time:
-        if time+dt>final_time:
+        if time+dt > final_time:
             dt = final_time-time
 
         for a, b in zip(rk4a, rk4b):
