@@ -14,13 +14,9 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-
-
 from __future__ import division
 
 import numpy as np
-
-
 
 
 # {{{ CPU
@@ -37,24 +33,24 @@ def AcousticsRHS3D(discr, Ux, Uy, Uz, Pr):
     vmapM = d.vmapM.reshape(d.K, -1)
     vmapP = d.vmapP.reshape(d.K, -1)
 
-    dUx = Ux.flat[vmapP] -Ux.flat[vmapM]
-    dUy = Uy.flat[vmapP] -Uy.flat[vmapM]
-    dUz = Uz.flat[vmapP] -Uz.flat[vmapM]
-    dPr = Pr.flat[vmapP] -Pr.flat[vmapM]
+    dUx = Ux.flat[vmapP] - Ux.flat[vmapM]
+    dUy = Uy.flat[vmapP] - Uy.flat[vmapM]
+    dUz = Uz.flat[vmapP] - Uz.flat[vmapM]
+    dPr = Pr.flat[vmapP] - Pr.flat[vmapM]
 
     # Impose reflective boundary conditions (Uz+ = -Uz-)
     dUx.flat[d.mapB] = 0.0
     dUy.flat[d.mapB] = 0.0
     dUz.flat[d.mapB] = 0.0
-    dPr.flat[d.mapB] =(-2.0)*Pr.flat[d.vmapB]
+    dPr.flat[d.mapB] = (-2.0)*Pr.flat[d.vmapB]
 
     # evaluate upwind fluxes
-    alpha  = 1.0
+    #alpha = 1.0
     R = dPr - d.nx*dUx - d.ny*dUy - d.nz*dUz
     fluxUx = -d.nx*R
     fluxUy = -d.ny*R
     fluxUz = -d.nz*R
-    fluxPr =     R
+    fluxPr = R
 
     # local derivatives of fields
     dPrdx, dPrdy, dPrdz = d.gradient(Pr)
@@ -69,6 +65,7 @@ def AcousticsRHS3D(discr, Ux, Uy, Uz, Pr):
     return rhsUx, rhsUy, rhsUz, rhsPr
 
 # }}}
+
 
 # {{{ loopy
 
