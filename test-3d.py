@@ -132,6 +132,9 @@ def main():
 
         def rhs(t, state):
             return make_obj_array(AcousticsRHS3D(d, *state))
+
+        state = ic_state
+
     elif options.comp_engine == "cl":
 
         import pyopencl as cl
@@ -167,6 +170,9 @@ def main():
             from pydgeon.runge_kutta import integrate_in_time_cl
             return integrate_in_time_cl(ctx, dtype, *args, **kwargs)
 
+    else:
+        raise RuntimeError("must specify computation engine (-c)")
+
     def vis_hook(step, t, state):
         if options.vis_every and step % options.vis_every == 0:
             p = state[-1]
@@ -176,7 +182,7 @@ def main():
             ref_p = soln(t)[-1]
             print la.norm(p - ref_p)/la.norm(ref_p)
 
-            if 0:
+            if 1:
                 vis.write_vtk("out-%04d.vtu" % step,
                         [
                             ("pressure", p),
@@ -201,25 +207,28 @@ def main():
 
                 print line
 
-                for evt in cl_info.volume_events:
-                    evt.wait()
-                for evt in cl_info.surface_events:
-                    evt.wait()
-                vol_time = 1e-9*sum(
-                    evt.profile.END-evt.profile.SUBMIT
-                    for evt in cl_info.volume_events)/len(cl_info.volume_events)
-                surf_time = 1e-9*sum(
-                    evt.profile.END-evt.profile.SUBMIT
-                    for evt in cl_info.surface_events)/len(cl_info.surface_events)
+                if options.comp_engine in ["cl", "loopy"]:
+                    for evt in cl_info.volume_events:
+                        evt.wait()
+                    for evt in cl_info.surface_events:
+                        evt.wait()
+                    vol_time = 1e-9*sum(
+                        evt.profile.END-evt.profile.SUBMIT
+                        for evt in cl_info.volume_events) \
+                                / len(cl_info.volume_events)
+                    surf_time = 1e-9*sum(
+                        evt.profile.END-evt.profile.SUBMIT
+                        for evt in cl_info.surface_events) \
+                                / len(cl_info.surface_events)
 
-                print "volume: %.4g GFlops/s time/step: %.3g s" % (
-                        rhs_obj.volume_flops/vol_time*1e-9,
-                        vol_time*5)  # for RK stages
-                print "surface: %.4g GFlops/s time/step: %.3g s" % (
-                        rhs_obj.surface_flops/surf_time*1e-9,
-                        surf_time*5)
+                    print "volume: %.4g GFlops/s time/step: %.3g s" % (
+                            rhs_obj.volume_flops/vol_time*1e-9,
+                            vol_time*5)  # for RK stages
+                    print "surface: %.4g GFlops/s time/step: %.3g s" % (
+                            rhs_obj.surface_flops/surf_time*1e-9,
+                            surf_time*5)
 
-                del cl_info.volume_events[:]
+                    del cl_info.volume_events[:]
 
     # time loop
     print "entering time loop"
