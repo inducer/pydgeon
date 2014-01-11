@@ -75,7 +75,7 @@ def integrate_in_time_cl(context, dtype, state, rhs_func, dt, final_time,
 
     from pyopencl.elementwise import ElementwiseKernel, VectorArg, ScalarArg
     from pytools.obj_array import as_oarray_func_n_args
-    axpby = ElementwiseKernel(context, [
+    axpby_knl = ElementwiseKernel(context, [
         ScalarArg(dtype, "a"),
         VectorArg(dtype, "x"),
         ScalarArg(dtype, "b"),
@@ -84,7 +84,11 @@ def integrate_in_time_cl(context, dtype, state, rhs_func, dt, final_time,
         ],
         "z[i] = a*x[i] + b*y[i]")
 
-    axpby = as_oarray_func_n_args(axpby)
+    # The decorator module won't work on callable objects. D'oh.
+    def axpby_wrapper(*args):
+        return axpby_knl(*args)
+
+    axpby = as_oarray_func_n_args(axpby_wrapper)
     # outer time step loop
     while time < final_time:
         if time+dt > final_time:
