@@ -85,6 +85,9 @@ class LoopyAcousticsRHS3D:
 
         ldis = discr.ldis
 
+        from pyopencl.characterize import get_fast_inaccurate_build_options
+        build_options = get_fast_inaccurate_build_options(context.devices[0])
+
         # {{{ volume kernel
 
         import loopy as lp
@@ -105,14 +108,12 @@ class LoopyAcousticsRHS3D:
                     + dot(drst_dz[k], dw_drst))
                 """,
             [
-                lp.GlobalArg("u,v,w,p,rhsu,rhsv,rhsw,rhsp",
-                    dtype, shape="K, Np", order="C"),
                 lp.GlobalArg("DrDsDt", dtype4, shape="Np, Np", order="F"),
-                lp.GlobalArg("drst_dx,drst_dy,drst_dz", dtype4, shape="K"),
-                lp.ValueArg("K", np.int32, approximately=1000),
+                "...",
                 ],
             name="dg_volume", assumptions="K>=1",
-            defines=dict(Np=discr.ldis.Np))
+            defines=dict(Np=discr.ldis.Np),
+            options=dict(no_numpy=True, cl_build_options=build_options))
 
         def transform_vol(knl):
             knl = lp.tag_inames(knl, dict(n="l.0", k="g.0"))
@@ -125,9 +126,6 @@ class LoopyAcousticsRHS3D:
                 knl = lp.add_prefetch(knl, "%s" % name)
             knl = lp.add_prefetch(knl, "DrDsDt")
             return knl
-
-        from pyopencl.characterize import get_fast_inaccurate_build_options
-        options = get_fast_inaccurate_build_options(context.devices[0])
 
         self.volume_kernel = transform_vol(volume_kernel)
 
@@ -174,18 +172,13 @@ class LoopyAcousticsRHS3D:
                     rhsp[k,n] = rhsp[k,n] + sum(mp, LIFT[n,mp]*fluxp[mp])
                     """,
                 [
-                    lp.GlobalArg("vmapP,vmapM",
-                        np.int32, shape="K, NfpNfaces", order="C"),
-                    lp.GlobalArg("u,v,w,p,rhsu,rhsv,rhsw,rhsp",
-                        dtype, shape="K, Np", order="C"),
-                    lp.GlobalArg("nx,ny,nz,Fscale,bc",
-                        dtype, shape="K, NfpNfaces", order="C"),
+                    lp.GlobalArg("u,v,w,p", dtype, shape="K, Np", order="C"),
                     lp.GlobalArg("LIFT", dtype, shape="Np, NfpNfaces", order="F"),
-                    lp.ValueArg("K", np.int32, approximately=1000),
+                    "...",
                     ],
                 name="dg_surface", assumptions="K>=1",
-                defines=dict(Np=ldis.Np, Nfp=ldis.Nfp, NfpNfaces=NfpNfaces)
-                )
+                defines=dict(Np=ldis.Np, Nfp=ldis.Nfp, NfpNfaces=NfpNfaces),
+                options=dict(no_numpy=True, cl_build_options=build_options))
 
         def transform_surface_kernel(knl):
             print knl
@@ -221,7 +214,7 @@ class LoopyAcousticsRHS3D:
                 DrDsDt=cl_info.drdsdt,
                 drst_dx=cl_info.drst_dx, drst_dy=cl_info.drst_dy,
                 drst_dz=cl_info.drst_dz,
-                K=d.K, flags="no_numpy",
+                K=d.K,
                 allocator=cl_info.allocator)
 
         cl_info.volume_events.append(evt)
@@ -238,7 +231,7 @@ class LoopyAcousticsRHS3D:
                 nz=cl_info.nz,
                 Fscale=cl_info.Fscale,
                 bc=cl_info.bc,
-                LIFT=cl_info.LIFT, K=d.K, flags="no_numpy",
+                LIFT=cl_info.LIFT, K=d.K,
                 allocator=cl_info.allocator)
 
             cl_info.surface_events.append(evt)
