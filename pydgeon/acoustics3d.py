@@ -60,7 +60,7 @@ def AcousticsRHS3D(discr, Ux, Uy, Uz, Pr):
     rhsUx = -dPrdx + eldot(l.LIFT, (d.Fscale*fluxUx))/2.0
     rhsUy = -dPrdx + eldot(l.LIFT, (d.Fscale*fluxUy))/2.0
     rhsUz = -dPrdz + eldot(l.LIFT, (d.Fscale*fluxUz))/2.0
-    rhsPr = -divU  + eldot(l.LIFT, (d.Fscale*fluxPr))/2.0
+    rhsPr = -divU + eldot(l.LIFT, (d.Fscale*fluxPr))/2.0
 
     return rhsUx, rhsUy, rhsUz, rhsPr
 
@@ -79,7 +79,7 @@ class LoopyAcousticsRHS3D:
         self.profile = profile
 
         import pyopencl as cl
-        import pyopencl.array
+        import pyopencl.array  # noqa
 
         dtype4 = cl.array.vec.types[np.dtype(dtype), 4]
 
@@ -129,16 +129,13 @@ class LoopyAcousticsRHS3D:
         from pyopencl.characterize import get_fast_inaccurate_build_options
         options = get_fast_inaccurate_build_options(context.devices[0])
 
-        volume_kernel = transform_vol(volume_kernel)
-        self.c_volume_kernel = lp.CompiledKernel(
-            context, volume_kernel,
-            options=options)
-        #self.c_volume_kernel.print_code()
+        self.volume_kernel = transform_vol(volume_kernel)
 
         self.volume_flops = discr.K * (
-                ( 4 # num components
-                * 3*discr.ldis.Np**2*2
-                )
+                (
+                    4  # num components
+                    * 3*discr.ldis.Np**2*2
+                    )
                 +
                 (
                     (3*2-1)*discr.ldis.Np * 6
@@ -148,11 +145,11 @@ class LoopyAcousticsRHS3D:
         # }}}
 
         # {{{ surface kernel
-        NfpNfaces=ldis.Nfaces*ldis.Nfp
+
+        NfpNfaces = ldis.Nfaces*ldis.Nfp
 
         surface_kernel = lp.make_kernel(context.devices[0],
-                ["{[m,mp,n,k]: 0<= m,mp < NfpNfaces and 0<= n < Np and 0<= k < K }"
-                    ],
+                "{[m,mp,n,k]: 0<= m,mp < NfpNfaces and 0<= n < Np and 0<= k < K }",
                 """
                     <> idP = vmapP[k,m]
                     <> idM = vmapM[k,m]
@@ -197,19 +194,13 @@ class LoopyAcousticsRHS3D:
             knl = lp.add_prefetch(knl, "LIFT")
             for name in ["nx", "ny", "nz", "Fscale", "bc"]:
                 knl = lp.add_prefetch(knl, name)
+            knl = lp.set_loop_priority(knl, "mp_outer,mp_inner")
             return knl
 
-        surface_kernel = transform_surface_kernel(surface_kernel)
-        for surface_kernel in lp.generate_loop_schedules(
-                   surface_kernel, loop_priority=["mp_outer", "mp_inner"]):
-            self.c_surface_kernel = lp.CompiledKernel(
-                context, surface_kernel,
-                options=options)
-            self.c_surface_kernel.print_code()
-            break
+        self.surface_kernel = transform_surface_kernel(surface_kernel)
 
         self.surface_flops = (discr.K
-                *(
+                * (
                     NfpNfaces*15
                     +
                     4*discr.ldis.Np*NfpNfaces*2
@@ -225,30 +216,32 @@ class LoopyAcousticsRHS3D:
         cl_info = self.cl_discr_info
 
         # local derivatives of fields
-        evt, (rhsUx, rhsUy, rhsUz, rhsPr) = self.c_volume_kernel(
+        evt, (rhsUx, rhsUy, rhsUz, rhsPr) = self.volume_kernel(
                 queue, u=Ux, v=Uy, w=Uz, p=Pr,
                 DrDsDt=cl_info.drdsdt,
-                drst_dx=cl_info.drst_dx, drst_dy=cl_info.drst_dy, drst_dz=cl_info.drst_dz,
-                K=d.K, warn_numpy=True,
+                drst_dx=cl_info.drst_dx, drst_dy=cl_info.drst_dy,
+                drst_dz=cl_info.drst_dz,
+                K=d.K, flags="no_numpy",
                 allocator=cl_info.allocator)
 
         cl_info.volume_events.append(evt)
 
-        evt, (rhsUx, rhsUy, rhsUz, rhsPr) = self.c_surface_kernel(
-            queue,
-            vmapP=cl_info.vmapP,
-            vmapM=cl_info.vmapM,
-            u=Ux, v=Uy, w=Uz, p=Pr,
-            rhsu=rhsUx, rhsv=rhsUy, rhsw=rhsUz, rhsp=rhsPr,
-            nx=cl_info.nx,
-            ny=cl_info.ny,
-            nz=cl_info.nz,
-            Fscale=cl_info.Fscale,
-            bc=cl_info.bc,
-            LIFT=cl_info.LIFT, K=d.K, warn_numpy=True,
-            allocator=cl_info.allocator)
+        if 1:
+            evt, (rhsUx, rhsUy, rhsUz, rhsPr) = self.surface_kernel(
+                queue,
+                vmapP=cl_info.vmapP,
+                vmapM=cl_info.vmapM,
+                u=Ux, v=Uy, w=Uz, p=Pr,
+                rhsu=rhsUx, rhsv=rhsUy, rhsw=rhsUz, rhsp=rhsPr,
+                nx=cl_info.nx,
+                ny=cl_info.ny,
+                nz=cl_info.nz,
+                Fscale=cl_info.Fscale,
+                bc=cl_info.bc,
+                LIFT=cl_info.LIFT, K=d.K, flags="no_numpy",
+                allocator=cl_info.allocator)
 
-        cl_info.surface_events.append(evt)
+            cl_info.surface_events.append(evt)
 
         return rhsUx, rhsUy, rhsUz, rhsPr
 

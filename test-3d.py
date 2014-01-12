@@ -63,8 +63,8 @@ def main():
         ux = np.zeros((d.K, d.ldis.Np))
         uy = np.zeros((d.K, d.ldis.Np))
         uz = np.zeros((d.K, d.ldis.Np))
-        pr = (np.sin(m_mode*np.pi*d.x)*np.sin(n_mode*np.pi*d.y)
-                * np.sin(n_mode*np.pi*d.z)
+        pr = (np.cos(m_mode*np.pi*d.x)*np.cos(n_mode*np.pi*d.y)
+                * np.cos(n_mode*np.pi*d.z)
                 * np.cos(np.sqrt(m_mode**2 + n_mode**2 + o_mode**2)*np.pi*t))
 
         return ux, uy, uz, pr
@@ -191,9 +191,9 @@ def main():
                         )
 
         from time import time as wall_time
-        progress_every = 20
+        progress_every = 100
         start_timing_at_step = progress_every
-        if step % 20 == 0:
+        if step % progress_every == 0:
             if step == start_timing_at_step:
                 start_time[0] = wall_time()
             elif step > start_timing_at_step:
@@ -212,23 +212,27 @@ def main():
                         evt.wait()
                     for evt in cl_info.surface_events:
                         evt.wait()
-                    vol_time = 1e-9*sum(
-                        evt.profile.END-evt.profile.SUBMIT
-                        for evt in cl_info.volume_events) \
-                                / len(cl_info.volume_events)
-                    surf_time = 1e-9*sum(
-                        evt.profile.END-evt.profile.SUBMIT
-                        for evt in cl_info.surface_events) \
-                                / len(cl_info.surface_events)
 
-                    print "volume: %.4g GFlops/s time/step: %.3g s" % (
-                            rhs_obj.volume_flops/vol_time*1e-9,
-                            vol_time*5)  # for RK stages
-                    print "surface: %.4g GFlops/s time/step: %.3g s" % (
-                            rhs_obj.surface_flops/surf_time*1e-9,
-                            surf_time*5)
+                    if cl_info.volume_events:
+                        vol_time = 1e-9*sum(
+                            evt.profile.END-evt.profile.SUBMIT
+                            for evt in cl_info.volume_events) \
+                                    / len(cl_info.volume_events)
+                        print "volume: %.4g GFlops/s time/step: %.3g s" % (
+                                rhs_obj.volume_flops/vol_time*1e-9,
+                                vol_time*5)  # for RK stages
+                    if cl_info.surface_events:
+                        surf_time = 1e-9*sum(
+                            evt.profile.END-evt.profile.SUBMIT
+                            for evt in cl_info.surface_events) \
+                                    / len(cl_info.surface_events)
+
+                        print "surface: %.4g GFlops/s time/step: %.3g s" % (
+                                rhs_obj.surface_flops/surf_time*1e-9,
+                                surf_time*5)
 
                     del cl_info.volume_events[:]
+                    del cl_info.surface_events[:]
 
     # time loop
     print "entering time loop"
