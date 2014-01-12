@@ -215,7 +215,7 @@ def main():
 
                     if cl_info.volume_events:
                         vol_time = 1e-9*sum(
-                            evt.profile.END-evt.profile.SUBMIT
+                            evt.profile.END-evt.profile.START
                             for evt in cl_info.volume_events) \
                                     / len(cl_info.volume_events)
                         print "volume: %.4g GFlops/s time/step: %.3g s" % (
@@ -223,7 +223,7 @@ def main():
                                 vol_time*5)  # for RK stages
                     if cl_info.surface_events:
                         surf_time = 1e-9*sum(
-                            evt.profile.END-evt.profile.SUBMIT
+                            evt.profile.END-evt.profile.START
                             for evt in cl_info.surface_events) \
                                     / len(cl_info.surface_events)
 
