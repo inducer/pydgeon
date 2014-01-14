@@ -100,7 +100,6 @@ class LoopyAcousticsRHS3D:
                 <> dw_drst = sum(m, DrDsDt[n,m]*w[k,m])
                 <> dp_drst = sum(m, DrDsDt[n,m]*p[k,m])
 
-                # volume flux
                 rhsu[k,n] = - dot(drst_dx[k],dp_drst)
                 rhsv[k,n] = - dot(drst_dy[k],dp_drst)
                 rhsw[k,n] = - dot(drst_dz[k],dp_drst)
@@ -139,6 +138,16 @@ class LoopyAcousticsRHS3D:
                     (3*2-1)*discr.ldis.Np * 6
                     )
                 + 2)
+
+        self.volume_bytes = np.dtype(dtype).itemsize * discr.K * (
+                (
+                    4  # num components
+                    * 2  # load, store
+                    * discr.ldis.Np
+                    )
+                +
+                # geometric factors
+                6)
 
         # }}}
 

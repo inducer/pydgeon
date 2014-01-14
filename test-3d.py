@@ -191,7 +191,7 @@ def main():
                         )
 
         from time import time as wall_time
-        progress_every = 100
+        progress_every = 3
         start_timing_at_step = progress_every
         if step % progress_every == 0:
             if step == start_timing_at_step:
@@ -218,9 +218,13 @@ def main():
                             evt.profile.END-evt.profile.START
                             for evt in cl_info.volume_events) \
                                     / len(cl_info.volume_events)
-                        print "volume: %.4g GFlops/s time/step: %.3g s" % (
-                                rhs_obj.volume_flops/vol_time*1e-9,
-                                vol_time*5)  # for RK stages
+                        print(
+                                "volume: %.4g GFlops/s %.4g "
+                                "GBytes/s time/step: %.3g s" % (
+                                    rhs_obj.volume_flops/vol_time*1e-9,
+                                    rhs_obj.volume_bytes/vol_time*1e-9,
+                                    vol_time*5)  # for RK stages
+                                )
                     if cl_info.surface_events:
                         surf_time = 1e-9*sum(
                             evt.profile.END-evt.profile.START
