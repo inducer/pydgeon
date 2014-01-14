@@ -131,7 +131,8 @@ class LoopyAcousticsRHS3D:
         self.volume_flops = discr.K * (
                 (
                     4  # num components
-                    * 3*discr.ldis.Np**2*2
+                    * 3
+                    *discr.ldis.Np**2*2
                     )
                 +
                 (
@@ -146,8 +147,12 @@ class LoopyAcousticsRHS3D:
                     * discr.ldis.Np
                     )
                 +
+                # matrix
+                3
+                * discr.ldis.Np**2
+                +
                 # geometric factors
-                6)
+                6*4)
 
         # }}}
 
@@ -190,7 +195,7 @@ class LoopyAcousticsRHS3D:
                 options=dict(no_numpy=True, cl_build_options=build_options))
 
         def transform_surface_kernel(knl):
-            print knl
+            #print knl
             knl = lp.tag_inames(knl, dict(k="g.0", n="l.0", m="l.0"))
             knl = lp.split_iname(knl, "mp", 4, inner_tag="unr")
             knl = lp.add_prefetch(knl, "LIFT")

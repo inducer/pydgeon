@@ -192,7 +192,7 @@ def main():
 
         from time import time as wall_time
         progress_every = 3
-        start_timing_at_step = progress_every
+        start_timing_at_step = 3*progress_every
         if step % progress_every == 0:
             if step == start_timing_at_step:
                 start_time[0] = wall_time()
@@ -219,8 +219,8 @@ def main():
                             for evt in cl_info.volume_events) \
                                     / len(cl_info.volume_events)
                         print(
-                                "volume: %.4g GFlops/s %.4g "
-                                "GBytes/s time/step: %.3g s" % (
+                                "volume: %.4g GFlops/s "
+                                "%.4g GBytes/s time/step: %.3g s" % (
                                     rhs_obj.volume_flops/vol_time*1e-9,
                                     rhs_obj.volume_bytes/vol_time*1e-9,
                                     vol_time*5)  # for RK stages
