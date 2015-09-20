@@ -91,7 +91,7 @@ class LoopyAcousticsRHS3D:
         # {{{ volume kernel
 
         import loopy as lp
-        volume_kernel = lp.make_kernel(context.devices[0], [
+        volume_kernel = lp.make_kernel([
             "{[n,m,k]: 0<= n,m < Np and 0<= k < K}",
             ],
             """
@@ -160,7 +160,7 @@ class LoopyAcousticsRHS3D:
 
         NfpNfaces = ldis.Nfaces*ldis.Nfp
 
-        surface_kernel = lp.make_kernel(context.devices[0],
+        surface_kernel = lp.make_kernel(
                 "{[m,mp,n,k]: 0<= m,mp < NfpNfaces and 0<= n < Np and 0<= k < K }",
                 """
                     <> idP = vmapP[k,m]
